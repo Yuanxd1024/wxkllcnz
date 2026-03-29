@@ -11,7 +11,6 @@ import subprocess
 import requests
 import tempfile
 import shutil
-import psutil
 from datetime import datetime
 from email.header import decode_header
 from email.utils import parsedate_to_datetime
@@ -49,92 +48,6 @@ def read_config():
             key, val = line.split(":", 1)
             config[key.strip()] = val.strip()
     return config
-
-def force_kill_driver(driver):
-    if not driver:
-        return
-    try:
-        driver_pid = driver.service.process.pid
-        try:
-            parent = psutil.Process(driver_pid)
-            for child in parent.children(recursive=True):
-                try:
-                    child.kill()
-                except (psutil.NoSuchProcess, psutil.AccessDenied):
-                    pass
-            try:
-                parent.kill()
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                pass
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
-            pass
-    except Exception:
-        pass
-    finally:
-        try:
-            driver.quit()
-        except Exception:
-            pass
-
-def cleanup_zombie_chrome():
-    current_time = time.time()
-    for proc in psutil.process_iter(['pid', 'name', 'cmdline', 'create_time']):
-        try:
-            name = proc.info.get('name')
-            if name and ('chrome' in name.lower() or 'chromedriver' in name.lower()):
-                cmdline = proc.info.get('cmdline')
-                if cmdline:
-                    cmd_str = ' '.join(cmdline)
-                    if 'jlc_profile_' in cmd_str or '--headless' in cmd_str:
-                        create_time = proc.info.get('create_time', current_time)
-                        if current_time - create_time > 120:
-                            proc.kill()
-        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
-            continue
-
-def create_chrome_driver(profile_dir, proxy_str=None, disable_images=False):
-    options = Options()
-    options.page_load_strategy = 'eager'
-    options.add_argument(f"--user-data-dir={profile_dir}")
-    
-    if proxy_str:
-        options.add_argument(f"--proxy-server=http://{proxy_str}")
-    
-    options.add_argument('--headless=new')
-    options.add_argument('--no-sandbox')
-    options.add_argument('--disable-gpu')
-    options.add_argument('--disable-dev-shm-usage')
-    options.add_argument('--disable-software-rasterizer')
-    options.add_argument('--disable-extensions')
-    
-    options.add_argument('--disable-background-networking')
-    options.add_argument('--disable-background-timer-throttling')
-    options.add_argument('--disable-backgrounding-occluded-windows')
-    options.add_argument('--disable-renderer-backgrounding')
-    options.add_argument('--disable-hang-monitor')
-    options.add_argument('--disable-ipc-flooding-protection')
-    options.add_argument('--disable-default-apps')
-    options.add_argument('--disable-translate')
-    options.add_argument('--disable-sync')
-    options.add_argument('--metrics-recording-only')
-    options.add_argument('--safebrowsing-disable-auto-update')
-    options.add_argument('--enable-features=NetworkServiceInProcess2')
-    options.add_argument('--disable-features=IsolateOrigins,site-per-process')
-    options.add_argument('--js-flags=--max-old-space-size=512')
-    
-    options.add_argument('--window-size=1366,768')
-    options.add_argument('--disable-blink-features=AutomationControlled')
-    if disable_images:
-        options.add_argument('--blink-settings=imagesEnabled=false')
-    options.add_argument('--mute-audio')
-    legacy_ua = "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/86.0.4240.198 Safari/537.36"
-    options.add_argument(f"user-agent={legacy_ua}")
-    options.set_capability('goog:loggingPrefs', {'performance': 'ALL'})
-    
-    driver = webdriver.Chrome(options=options)
-    driver.set_page_load_timeout(20)
-    driver.set_script_timeout(20)
-    return driver
 
 class HaoZhuMa:
     def __init__(self, host, user, pwd, sid):
@@ -283,14 +196,6 @@ def dp_fetch(driver, url, method="POST", body=None, extra_headers=None):
 
         js_code = js_clear_sig + f"""
         var callback = arguments[arguments.length - 1];
-        var isDone = false;
-        var timer = setTimeout(function() {{
-            if (!isDone) {{
-                isDone = true;
-                callback({{"error": "JS内部fetch超时 (15s)"}});
-            }}
-        }}, 15000);
-
         fetch('{url}', {{
             method: '{method}',
             headers: {headers_str},
@@ -298,9 +203,6 @@ def dp_fetch(driver, url, method="POST", body=None, extra_headers=None):
             credentials: 'include'
         }}).then(async r => {{
             const text = await r.text();
-            if (isDone) return;
-            isDone = true;
-            clearTimeout(timer);
             try {{
                 callback(JSON.parse(text));
             }} catch(e) {{
@@ -310,12 +212,7 @@ def dp_fetch(driver, url, method="POST", body=None, extra_headers=None):
                     snippet: text.substring(0, 200)
                 }});
             }}
-        }}).catch(e => {{
-            if (isDone) return;
-            isDone = true;
-            clearTimeout(timer);
-            callback({{error: e.toString()}});
-        }});
+        }}).catch(e => callback({{error: e.toString()}}));
         """
         
         for attempt in range(10):
@@ -501,6 +398,7 @@ def register_account(hzm, config, email_index, fixed_password):
     
     driver = None
     proxy_str = None
+    legacy_ua = "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/86.0.4240.198 Safari/537.36"
     
     def safe_get_page(target_driver, url, max_retries=2):
         for attempt in range(max_retries):
@@ -514,6 +412,7 @@ def register_account(hzm, config, email_index, fixed_password):
                 except:
                     pass
                 if attempt == max_retries - 1:
+                    # 抛出专属浏览器异常
                     raise BrowserError(f"连续 {max_retries} 次加载 {url} 失败: {te}")
                 time.sleep(2)
             except Exception as e:
@@ -536,10 +435,34 @@ def register_account(hzm, config, email_index, fixed_password):
                 log("🔄 触发防断连：继承之前的登录状态重启...")
                 try: 
                     saved_temp_cookies = driver.get_cookies()
-                    force_kill_driver(driver)
+                    driver.quit()
                 except: saved_temp_cookies = []
                 
-                driver = create_chrome_driver(create_new_profile_dir(), proxy_str, disable_images=True)
+                new_options = Options()
+                new_options.page_load_strategy = 'eager'
+                new_options.add_argument(f"--user-data-dir={create_new_profile_dir()}")
+                
+                if proxy_str:
+                    proxy_str = get_valid_proxy()
+                    new_options.add_argument(f"--proxy-server=http://{proxy_str}")
+                
+                new_options.add_argument('--headless=new')
+                new_options.add_argument('--no-sandbox')
+                new_options.add_argument('--disable-gpu')
+                new_options.add_argument('--disable-dev-shm-usage')
+                new_options.add_argument('--disable-software-rasterizer')
+                new_options.add_argument('--disable-extensions')
+                
+                new_options.add_argument('--window-size=1366,768')
+                new_options.add_argument('--disable-blink-features=AutomationControlled')
+                new_options.add_argument('--blink-settings=imagesEnabled=false')
+                new_options.add_argument('--mute-audio')
+                new_options.add_argument(f"user-agent={legacy_ua}")
+                new_options.set_capability('goog:loggingPrefs', {'performance': 'ALL'})
+                
+                driver = webdriver.Chrome(options=new_options)
+                driver.set_page_load_timeout(30)
+                driver.set_script_timeout(30)
                 
                 domain = "https://passport.jlc.com" if "passport" in url else "https://m.jlc.com"
                 try:
@@ -553,7 +476,7 @@ def register_account(hzm, config, email_index, fixed_password):
                     try: driver.add_cookie(clean_c)
                     except: pass
                 
-                driver.set_page_load_timeout(20)
+                driver.set_page_load_timeout(30)
                 safe_get_page(driver, f"{domain}/m/register")
                 time.sleep(3)
                 
@@ -561,7 +484,26 @@ def register_account(hzm, config, email_index, fixed_password):
 
     try:
         proxy_str = None 
-        driver = create_chrome_driver(create_new_profile_dir(), proxy_str, disable_images=False)
+        
+        options = Options()
+        options.page_load_strategy = 'eager'
+        options.add_argument(f"--user-data-dir={create_new_profile_dir()}")
+        options.add_argument('--headless=new')
+        options.add_argument('--no-sandbox')
+        options.add_argument('--disable-gpu')
+        options.add_argument('--disable-dev-shm-usage')
+        options.add_argument('--disable-software-rasterizer')
+        options.add_argument('--disable-extensions')
+        
+        options.add_argument('--window-size=1366,768')
+        options.add_argument('--disable-blink-features=AutomationControlled')
+        options.add_argument('--mute-audio')
+        options.add_argument(f"user-agent={legacy_ua}")
+        options.set_capability('goog:loggingPrefs', {'performance': 'ALL'})
+        
+        driver = webdriver.Chrome(options=options)
+        driver.set_page_load_timeout(30)
+        driver.set_script_timeout(30)
 
         phone = None
         sms_code = None
@@ -612,7 +554,7 @@ def register_account(hzm, config, email_index, fixed_password):
         log("🔄 释放浏览器并获取代理（超时: 60s）...")
         try:
             temp_cookies_1 = driver.get_cookies()
-            force_kill_driver(driver)
+            driver.quit()
         except:
             temp_cookies_1 = []
             pass
@@ -624,7 +566,26 @@ def register_account(hzm, config, email_index, fixed_password):
             
         ip_get_time = time.time()
             
-        driver = create_chrome_driver(create_new_profile_dir(), proxy_str, disable_images=True)
+        co = Options()
+        co.page_load_strategy = 'eager'
+        co.add_argument(f"--user-data-dir={create_new_profile_dir()}")
+        co.add_argument(f"--proxy-server=http://{proxy_str}")
+        co.add_argument('--headless=new')
+        co.add_argument('--no-sandbox')
+        co.add_argument('--disable-gpu')
+        co.add_argument('--disable-dev-shm-usage')
+        co.add_argument('--disable-software-rasterizer')
+        co.add_argument('--disable-extensions')
+        
+        co.add_argument('--window-size=1366,768')
+        co.add_argument('--disable-blink-features=AutomationControlled')
+        co.add_argument('--blink-settings=imagesEnabled=false')
+        co.add_argument('--mute-audio')
+        co.add_argument(f"user-agent={legacy_ua}")
+        co.set_capability('goog:loggingPrefs', {'performance': 'ALL'})
+        
+        driver = webdriver.Chrome(options=co)
+        driver.set_script_timeout(30)
         
         log("🌐 [代理] 重建浏览器环境，跨域恢复 Cookie 状态...")
         try:
@@ -640,11 +601,11 @@ def register_account(hzm, config, email_index, fixed_password):
                 try: driver.add_cookie(clean_c)
                 except: pass
                 
-            driver.set_page_load_timeout(20)
+            driver.set_page_load_timeout(25)
             safe_get_page(driver, "https://passport.jlc.com/m/register")
         except BrowserError as be:
             hzm.release_phone(phone)
-            raise be 
+            raise be # 向上传递以触发无限重试
         except Exception as e:
             hzm.release_phone(phone)
             raise Exception(f"新代理加载页面失败或未知异常: {e}")
@@ -653,7 +614,7 @@ def register_account(hzm, config, email_index, fixed_password):
             hzm.release_phone(phone)
             raise Exception("页面加载完毕但代理 IP 寿命（60秒）已耗尽，放弃当前任务，重新开始注册")
             
-        driver.set_page_load_timeout(20)
+        driver.set_page_load_timeout(30)
         time.sleep(random.uniform(1.5, 2.5))
 
         log("📡 发送 get-init-session...")
@@ -720,11 +681,29 @@ def register_account(hzm, config, email_index, fixed_password):
 
         log("🔄 注册阶段结束，关闭代理浏览器，无代理进行归属设置...")
         try:
-            force_kill_driver(driver)
+            driver.quit()
         except: pass
         time.sleep(2)
 
-        driver = create_chrome_driver(create_new_profile_dir(), proxy_str=None, disable_images=False)
+        co2 = Options()
+        co2.page_load_strategy = 'eager'
+        co2.add_argument(f"--user-data-dir={create_new_profile_dir()}")
+        co2.add_argument('--headless=new')
+        co2.add_argument('--no-sandbox')
+        co2.add_argument('--disable-gpu')
+        co2.add_argument('--disable-dev-shm-usage')
+        co2.add_argument('--disable-software-rasterizer')
+        co2.add_argument('--disable-extensions')
+        
+        co2.add_argument('--window-size=1366,768')
+        co2.add_argument('--disable-blink-features=AutomationControlled')
+        co2.add_argument('--mute-audio')
+        co2.add_argument(f"user-agent={legacy_ua}")
+        co2.set_capability('goog:loggingPrefs', {'performance': 'ALL'})
+        
+        driver = webdriver.Chrome(options=co2)
+        driver.set_page_load_timeout(30)
+        driver.set_script_timeout(30)
         
         log("🌐 浏览器已启动，准备执行新注册账号登录流程...")
         login_success = False
@@ -963,6 +942,7 @@ def register_account(hzm, config, email_index, fixed_password):
         return {"error": "browser_error"}
     except Exception as e:
         err_str = str(e).lower()
+        # 英文关键字拦截 Selenium 抛出的各种引擎或驱动错误
         if any(kw in err_str for kw in ["timeout", "timed out", "renderer", "session", "chrome not reachable", "disconnected", "no such window", "failed to start"]):
             log(f"❌ 浏览器引擎打不开或异常崩溃: {e}")
             return {"error": "browser_error"}
@@ -972,7 +952,7 @@ def register_account(hzm, config, email_index, fixed_password):
     finally:
         try:
             if driver:
-                force_kill_driver(driver)
+                driver.quit()
         except:
             pass
         time.sleep(1)
@@ -1009,8 +989,6 @@ def main():
     consecutive_failures = 0  
 
     while success_count < reg_count:
-        cleanup_zombie_chrome()
-        
         current_attempt = consecutive_failures + 1
         log(f"\n{'='*50}")
         log(f"🚀 开始注册任务进度: {success_count + 1}/{reg_count} (当前账号尝试第 {current_attempt} 次)")
@@ -1035,6 +1013,7 @@ def main():
                 time.sleep(wait_time)
                 
         elif res and res.get("error") == "browser_error":
+            # 捕获引擎级别错误，阻断重试计数器累加，启动无限重试
             log("⚠ 检测到浏览器打不开或页面加载崩溃，本次失败不计入重试次数")
             time.sleep(3)
             continue
