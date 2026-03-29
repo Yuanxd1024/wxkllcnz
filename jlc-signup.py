@@ -171,7 +171,6 @@ def create_chrome_driver(profile_dir, proxy_str=None, legacy_ua=None):
     options.add_argument('--disable-features=TranslateUI')             # 禁用翻译UI
     options.add_argument('--force-color-profile=srgb')                 # 固定颜色配置
     options.add_argument('--metrics-recording-only')                   # 仅记录指标
-    options.add_argument('--single-process')                           # 单进程模式,减少renderer超时
     options.add_argument('--memory-pressure-off')                      # 关闭内存压力响应
     
     # 限制渲染器进程内存，防止内存泄漏导致系统卡死
