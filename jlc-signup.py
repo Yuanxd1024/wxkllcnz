@@ -683,7 +683,7 @@ def register_account(hzm, config, email_index, fixed_password):
         for get_sms_loop in range(100):
             log(f"🌐 打开注册页面... (本阶段第 {get_sms_loop + 1} 次尝试)")
             safe_get_page(driver, "https://passport.jlc.com/m/register")
-            time.sleep(random.uniform(3.5, 5.5))
+            time.sleep(2)
             
             phone = None
             for phone_attempt in range(20):
@@ -770,7 +770,7 @@ def register_account(hzm, config, email_index, fixed_password):
             raise Exception("页面加载完毕但代理 IP 寿命（60秒）已耗尽，放弃当前任务，重新开始注册")
             
         driver.set_page_load_timeout(20)
-        time.sleep(random.uniform(1.5, 2.5))
+        time.sleep(1)
 
         log("📡 发送 get-init-session...")
         r2 = safe_fetch("https://passport.jlc.com/api/cas/register/get-init-session", "POST", {
@@ -778,10 +778,6 @@ def register_account(hzm, config, email_index, fixed_password):
         })
         if r2.get("code") != 200:
             raise Exception(f"Session 初始化失败: {r2}")
-
-        human_delay = random.uniform(1.5, 3.0)
-        log(f"⏳ 模拟真实输入，等待 {human_delay:.1f} 秒...")
-        time.sleep(human_delay)
         
         log("📡 发送 register/submit...")
         r3 = safe_fetch("https://passport.jlc.com/api/cas/register/submit", "POST", {
