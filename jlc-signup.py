@@ -311,7 +311,7 @@ def get_email_code(user, pwd, customer_code, timeout=60):
 
     while time.time() < end_time:
         try:
-            mail = imaplib.IMAP4_SSL("outlook.office365.com")
+            mail = imaplib.IMAP4_SSL("imap.gmail.com")
             mail.login(user, pwd)
             
             stat, count_data = mail.select("inbox")
