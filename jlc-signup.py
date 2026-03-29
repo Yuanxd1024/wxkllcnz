@@ -311,7 +311,7 @@ def get_email_code(user, pwd, customer_code, timeout=60):
 
     while time.time() < end_time:
         try:
-            mail = imaplib.IMAP4_SSL("imap.2925.com")
+            mail = imaplib.IMAP4_SSL("outlook.office365.com")
             mail.login(user, pwd)
             
             stat, count_data = mail.select("inbox")
@@ -906,7 +906,7 @@ def register_account(hzm, config, email_index, fixed_password):
                 
                 base_email = config["邮箱"].split("@")[0]
                 domain = config["邮箱"].split("@")[1]
-                target_email = f"{base_email}{email_index}@{domain}"
+                target_email = f"{base_email}+{email_index}@{domain}"
                 enc_email = pwdEncrypt(target_email)
                 log(f"📡 正在向新邮箱 {target_email} 发送验证码...")
                 
