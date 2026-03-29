@@ -12,8 +12,7 @@ import requests
 import tempfile
 import shutil
 import signal
-import psutil  # 用于强杀残留进程
-import gc      # 主动垃圾回收
+import psutil
 from datetime import datetime
 from email.header import decode_header
 from email.utils import parsedate_to_datetime
@@ -21,7 +20,7 @@ from email.utils import parsedate_to_datetime
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
-from selenium.common.exceptions import TimeoutException, WebDriverException
+from selenium.common.exceptions import TimeoutException
 
 class BrowserError(Exception):
     """自定义异常: 用于精确标识浏览器底层打不开、崩溃或彻底超时的情况"""
@@ -35,164 +34,6 @@ except ImportError:
 
 def log(msg):
     print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
-
-# ==================== Chrome 进程强杀器 ====================
-def force_kill_chrome_tree(driver):
-    """
-    强制杀死 driver 关联的所有 Chrome 子进程树。
-    确保没有僵尸进程残留。
-    """
-    pids_to_kill = set()
-    
-    # 方法1：通过 driver.service.process 获取 chromedriver 主进程 PID
-    try:
-        if driver and hasattr(driver, 'service') and driver.service and driver.service.process:
-            chromedriver_pid = driver.service.process.pid
-            try:
-                parent = psutil.Process(chromedriver_pid)
-                # 递归获取所有子进程（包括 chrome, gpu-process, renderer 等）
-                for child in parent.children(recursive=True):
-                    pids_to_kill.add(child.pid)
-                pids_to_kill.add(chromedriver_pid)
-            except psutil.NoSuchProcess:
-                pass
-    except Exception:
-        pass
-    
-    # 方法2：先尝试正常 quit
-    try:
-        if driver:
-            driver.quit()
-    except Exception:
-        pass
-    
-    # 方法3：强杀所有收集到的 PID
-    for pid in pids_to_kill:
-        try:
-            p = psutil.Process(pid)
-            p.kill()
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
-            pass
-    
-    # 主动触发垃圾回收
-    gc.collect()
-
-
-def kill_all_zombie_chromes():
-    """
-    清理系统中所有无主的 chrome/chromedriver 僵尸进程。
-    在每次新建浏览器前调用。
-    """
-    killed = 0
-    for proc in psutil.process_iter(['pid', 'name', 'cmdline', 'create_time']):
-        try:
-            name = proc.info['name'].lower() if proc.info['name'] else ''
-            # 只杀 headless chrome 和 chromedriver，不影响用户自己的浏览器
-            if name in ('chromedriver', 'chromedriver.exe'):
-                proc.kill()
-                killed += 1
-            elif name in ('chrome', 'chrome.exe', 'chromium', 'chromium-browser'):
-                cmdline = ' '.join(proc.info.get('cmdline') or [])
-                if '--headless' in cmdline or '--user-data-dir=/tmp/jlc_profile' in cmdline or 'jlc_profile_' in cmdline:
-                    proc.kill()
-                    killed += 1
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
-            pass
-    if killed > 0:
-        log(f"🧹 清理了 {killed} 个残留 Chrome/ChromeDriver 进程")
-
-
-# ==================== 查找 chromedriver 路径 ====================
-def find_chromedriver_path():
-    """
-    自动查找 chromedriver 可执行文件路径。
-    优先使用 shutil.which 从 PATH 中查找，
-    兜底检查常见安装位置。
-    """
-    # 方法1：从 PATH 查找
-    path = shutil.which('chromedriver')
-    if path:
-        return path
-
-    # 方法2：常见安装位置
-    common_paths = [
-        '/usr/local/bin/chromedriver',
-        '/usr/bin/chromedriver',
-        '/snap/bin/chromedriver',
-        os.path.expanduser('~/chromedriver'),
-    ]
-    for p in common_paths:
-        if os.path.isfile(p) and os.access(p, os.X_OK):
-            return p
-
-    # 方法3：兜底返回名称，让 selenium 自己找
-    return 'chromedriver'
-
-
-# ==================== 安全创建浏览器 ====================
-def create_chrome_driver(profile_dir, proxy_str=None, legacy_ua=None):
-    """
-    统一的浏览器创建函数，内置所有防 renderer timeout 的参数。
-    """
-    # 创建前先清理僵尸进程
-    kill_all_zombie_chromes()
-    time.sleep(0.5)
-    
-    options = Options()
-    options.page_load_strategy = 'eager'
-    options.add_argument(f"--user-data-dir={profile_dir}")
-    
-    if proxy_str:
-        options.add_argument(f"--proxy-server=http://{proxy_str}")
-    
-    options.add_argument('--headless=new')
-    options.add_argument('--no-sandbox')
-    options.add_argument('--disable-gpu')
-    options.add_argument('--disable-dev-shm-usage')
-    options.add_argument('--disable-software-rasterizer')
-    options.add_argument('--disable-extensions')
-    options.add_argument('--window-size=1366,768')
-    options.add_argument('--disable-blink-features=AutomationControlled')
-    options.add_argument('--mute-audio')
-    
-    # ====== 防 renderer timeout 的关键参数 ======
-    options.add_argument('--blink-settings=imagesEnabled=false')       # 禁用图片加载
-    options.add_argument('--disable-background-networking')             # 禁止后台网络
-    options.add_argument('--disable-default-apps')                     # 禁用默认应用
-    options.add_argument('--disable-hang-monitor')                     # 禁用挂起检测(避免误判)
-    options.add_argument('--disable-popup-blocking')                   # 禁止弹窗阻断
-    options.add_argument('--disable-prompt-on-repost')                 # 禁止重传弹窗
-    options.add_argument('--disable-translate')                        # 禁止翻译
-    options.add_argument('--no-first-run')                             # 跳过首次运行
-    options.add_argument('--disable-background-timer-throttling')      # 禁止后台定时器节流
-    options.add_argument('--disable-renderer-backgrounding')           # 禁止渲染器后台化
-    options.add_argument('--disable-backgrounding-occluded-windows')   # 禁止遮挡窗口后台化
-    options.add_argument('--disable-ipc-flooding-protection')          # 禁止IPC洪泛保护
-    options.add_argument('--disable-features=TranslateUI')             # 禁用翻译UI
-    options.add_argument('--force-color-profile=srgb')                 # 固定颜色配置
-    options.add_argument('--metrics-recording-only')                   # 仅记录指标
-    options.add_argument('--memory-pressure-off')                      # 关闭内存压力响应
-    
-    # 限制渲染器进程内存，防止内存泄漏导致系统卡死
-    options.add_argument('--js-flags=--max-old-space-size=256')        # JS堆最大256MB
-    
-    if legacy_ua:
-        options.add_argument(f"user-agent={legacy_ua}")
-    
-    options.set_capability('goog:loggingPrefs', {'performance': 'ALL'})
-    
-    # ====== 修复: 显式传入 chromedriver 路径 ======
-    chromedriver_path = find_chromedriver_path()
-    log(f"🔧 使用 ChromeDriver 路径: {chromedriver_path}")
-    service = Service(executable_path=chromedriver_path)
-    driver = webdriver.Chrome(service=service, options=options)
-    
-    # ====== 使用合理的超时值 ======
-    driver.set_page_load_timeout(20)
-    driver.set_script_timeout(20)
-    
-    return driver
-
 
 def read_config():
     config = {}
@@ -209,6 +50,54 @@ def read_config():
             key, val = line.split(":", 1)
             config[key.strip()] = val.strip()
     return config
+
+def force_kill_driver(driver):
+    """强制终止 WebDriver 及其所有子进程，防止僵尸 Chrome 残留"""
+    if driver is None:
+        return
+    chrome_pid = None
+    try:
+        chrome_pid = driver.service.process.pid
+    except:
+        pass
+    try:
+        driver.quit()
+    except:
+        pass
+    if chrome_pid:
+        try:
+            parent = psutil.Process(chrome_pid)
+            children = parent.children(recursive=True)
+            for child in children:
+                try:
+                    child.kill()
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
+            try:
+                parent.kill()
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+        except psutil.NoSuchProcess:
+            pass
+        except Exception:
+            pass
+
+def cleanup_zombie_chrome():
+    """清理系统中所有可能残留的无主 Chrome/ChromeDriver 僵尸进程"""
+    killed = 0
+    for proc in psutil.process_iter(['pid', 'name', 'cmdline', 'create_time']):
+        try:
+            pname = (proc.info['name'] or '').lower()
+            cmdline = ' '.join(proc.info.get('cmdline') or []).lower()
+            if ('chrome' in pname or 'chromedriver' in pname) and ('jlc_profile_' in cmdline or '--headless' in cmdline):
+                age = time.time() - (proc.info.get('create_time') or time.time())
+                if age > 120:
+                    proc.kill()
+                    killed += 1
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+            continue
+    if killed > 0:
+        log(f"🧹 已清理 {killed} 个残留的僵尸 Chrome 进程")
 
 class HaoZhuMa:
     def __init__(self, host, user, pwd, sid):
@@ -335,19 +224,8 @@ def get_valid_proxy(timeout=None):
         except Exception as e:
             time.sleep(3)
 
-
-# ==================== dp_fetch  renderer 崩溃检测 ====================
 def dp_fetch(driver, url, method="POST", body=None, extra_headers=None):
-    """
-    通过浏览器执行 fetch 请求。增加了 renderer 状态预检。
-    """
     try:
-        # 执行前先检测 renderer 是否还活着
-        try:
-            driver.title  # 最轻量的 renderer 活性检测
-        except Exception as e:
-            raise BrowserError(f"Renderer 已崩溃，无法执行 fetch: {e}")
-        
         headers_dict = {'Content-Type': 'application/json', 'Accept': 'application/json, text/plain, */*'}
         if extra_headers:
             headers_dict.update(extra_headers)
@@ -368,16 +246,14 @@ def dp_fetch(driver, url, method="POST", body=None, extra_headers=None):
 
         js_code = js_clear_sig + f"""
         var callback = arguments[arguments.length - 1];
-        var _timeout = setTimeout(function() {{
-            callback({{error: "JS内部fetch超时(15s)"}});
-        }}, 15000);
+        var timer = setTimeout(function(){{ callback({{error: "fetch内部超时(15s)"}}); }}, 15000);
         fetch('{url}', {{
             method: '{method}',
             headers: {headers_str},
             {body_part}
             credentials: 'include'
         }}).then(async r => {{
-            clearTimeout(_timeout);
+            clearTimeout(timer);
             const text = await r.text();
             try {{
                 callback(JSON.parse(text));
@@ -388,26 +264,14 @@ def dp_fetch(driver, url, method="POST", body=None, extra_headers=None):
                     snippet: text.substring(0, 200)
                 }});
             }}
-        }}).catch(e => {{
-            clearTimeout(_timeout);
-            callback({{error: e.toString()}});
-        }});
+        }}).catch(e => {{ clearTimeout(timer); callback({{error: e.toString()}}); }});
         """
         
         for attempt in range(10):
             try:
                 res = driver.execute_async_script(js_code)
             except TimeoutException as te:
-                # 区分是 fetch 超时还是 renderer 彻底卡死
-                try:
-                    driver.title  # 再次检测
-                    res = {"error": f"执行fetch超时: {str(te)}"}
-                except Exception:
-                    raise BrowserError(f"Renderer 在 fetch 执行中彻底卡死: {te}")
-            except WebDriverException as we:
-                if "renderer" in str(we).lower() or "disconnected" in str(we).lower():
-                    raise BrowserError(f"Renderer 连接断开: {we}")
-                res = {"error": f"WebDriver异常: {str(we)}"}
+                res = {"error": f"执行fetch超时: {str(te)}"}
             
             if isinstance(res, dict) and res.get("error") == "非JSON响应(可能被拦截)":
                 if attempt < 9:
@@ -420,8 +284,6 @@ def dp_fetch(driver, url, method="POST", body=None, extra_headers=None):
             
             return res
             
-    except BrowserError:
-        raise  # 向上传递 BrowserError
     except Exception as e:
         log(f"❌ 浏览器 JS 发包执行失败: {e}")
         return {"error": str(e)}
@@ -573,60 +435,68 @@ def random_chinese_chars(count=3):
     last_names = "伟芳娜秀丽敏静坚勇婷杰娟涛明超强霞平刚桂英"
     return random.choice(first_names) + random.choice(last_names) + random.choice(last_names)
 
-
-# ==================== 浏览器生命周期管理器 ====================
-class BrowserManager:
-    """
-    集中管理浏览器的创建、销毁、重建，确保不会有僵尸进程。
-    每个 register_account 调用使用一个 manager 实例。
-    """
-    def __init__(self, legacy_ua):
-        self.drivers = []          # 跟踪所有创建过的 driver
-        self.profile_dirs = []     # 跟踪所有临时目录
-        self.legacy_ua = legacy_ua
-        self._current_driver = None
+def create_chrome_driver(profile_dir, proxy_str=None, legacy_ua=None, disable_images=False):
+    """统一创建 Chrome WebDriver 实例，集中配置所有抗超时参数"""
+    options = Options()
+    options.page_load_strategy = 'eager'
+    options.add_argument(f"--user-data-dir={profile_dir}")
     
-    def create_new_profile_dir(self):
-        d = tempfile.mkdtemp(prefix="jlc_profile_")
-        self.profile_dirs.append(d)
-        return d
+    if proxy_str:
+        options.add_argument(f"--proxy-server=http://{proxy_str}")
     
-    def new_driver(self, proxy_str=None):
-        """创建新 driver，自动跟踪"""
-        profile_dir = self.create_new_profile_dir()
-        driver = create_chrome_driver(profile_dir, proxy_str, self.legacy_ua)
-        self.drivers.append(driver)
-        self._current_driver = driver
-        return driver
+    options.add_argument('--headless=new')
+    options.add_argument('--no-sandbox')
+    options.add_argument('--disable-gpu')
+    options.add_argument('--disable-dev-shm-usage')
+    options.add_argument('--disable-software-rasterizer')
+    options.add_argument('--disable-extensions')
+    options.add_argument('--window-size=1366,768')
+    options.add_argument('--disable-blink-features=AutomationControlled')
+    options.add_argument('--mute-audio')
     
-    def kill_driver(self, driver):
-        """安全销毁指定 driver"""
-        if driver:
-            force_kill_chrome_tree(driver)
-            if driver in self.drivers:
-                self.drivers.remove(driver)
-            if self._current_driver is driver:
-                self._current_driver = None
+    options.add_argument('--disable-background-networking')
+    options.add_argument('--disable-background-timer-throttling')
+    options.add_argument('--disable-backgrounding-occluded-windows')
+    options.add_argument('--disable-renderer-backgrounding')
+    options.add_argument('--disable-hang-monitor')
+    options.add_argument('--disable-ipc-flooding-protection')
+    options.add_argument('--disable-prompt-on-repost')
+    options.add_argument('--disable-default-apps')
+    options.add_argument('--disable-translate')
+    options.add_argument('--disable-sync')
+    options.add_argument('--metrics-recording-only')
+    options.add_argument('--no-first-run')
+    options.add_argument('--safebrowsing-disable-auto-update')
+    options.add_argument('--enable-features=NetworkServiceInProcess2')
+    options.add_argument('--disable-features=TranslateUI,BlinkGenPropertyTrees,IsolateOrigins,site-per-process')
+    options.add_argument('--force-color-profile=srgb')
+    options.add_argument('--js-flags=--max-old-space-size=512')
     
-    def cleanup_all(self):
-        """销毁所有 driver 和临时目录"""
-        for d in list(self.drivers):
-            force_kill_chrome_tree(d)
-        self.drivers.clear()
-        self._current_driver = None
-        
-        time.sleep(0.5)
-        for d in self.profile_dirs:
-            shutil.rmtree(d, ignore_errors=True)
-        self.profile_dirs.clear()
-        
-        gc.collect()
-
+    if disable_images:
+        options.add_argument('--blink-settings=imagesEnabled=false')
+    
+    if legacy_ua:
+        options.add_argument(f"user-agent={legacy_ua}")
+    
+    options.set_capability('goog:loggingPrefs', {'performance': 'ALL'})
+    
+    service = Service()
+    service.creation_flags = 0
+    
+    driver = webdriver.Chrome(options=options, service=service)
+    driver.set_page_load_timeout(20)
+    driver.set_script_timeout(20)
+    
+    return driver
 
 def register_account(hzm, config, email_index, fixed_password):
-    legacy_ua = "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/86.0.4240.198 Safari/537.36"
-    bm = BrowserManager(legacy_ua)
-    
+    profile_dirs = []
+
+    def create_new_profile_dir():
+        d = tempfile.mkdtemp(prefix="jlc_profile_")
+        profile_dirs.append(d)
+        return d
+
     account_info = {
         "customerCode": "", "password": fixed_password, "phone": "",
         "email": "", "attributionName": "未设置"
@@ -634,6 +504,7 @@ def register_account(hzm, config, email_index, fixed_password):
     
     driver = None
     proxy_str = None
+    legacy_ua = "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/86.0.4240.198 Safari/537.36"
     
     def safe_get_page(target_driver, url, max_retries=2):
         for attempt in range(max_retries):
@@ -649,10 +520,7 @@ def register_account(hzm, config, email_index, fixed_password):
                 if attempt == max_retries - 1:
                     raise BrowserError(f"连续 {max_retries} 次加载 {url} 失败: {te}")
                 time.sleep(2)
-            except WebDriverException as e:
-                err_str = str(e).lower()
-                if "renderer" in err_str or "disconnected" in err_str or "not reachable" in err_str:
-                    raise BrowserError(f"Renderer 崩溃: {e}")
+            except Exception as e:
                 log(f"⚠ 页面加载底层异常 ({attempt+1}/{max_retries}): {e}")
                 if attempt == max_retries - 1:
                     raise BrowserError(f"页面加载彻底崩溃: {e}")
@@ -672,16 +540,19 @@ def register_account(hzm, config, email_index, fixed_password):
                 log("🔄 触发防断连：继承之前的登录状态重启...")
                 try: 
                     saved_temp_cookies = driver.get_cookies()
-                except: 
-                    saved_temp_cookies = []
-                
-                # 使用 manager 安全销毁
-                bm.kill_driver(driver)
+                except: saved_temp_cookies = []
+                force_kill_driver(driver)
+                driver = None
                 
                 if proxy_str:
                     proxy_str = get_valid_proxy()
                 
-                driver = bm.new_driver(proxy_str)
+                driver = create_chrome_driver(
+                    create_new_profile_dir(),
+                    proxy_str=proxy_str,
+                    legacy_ua=legacy_ua,
+                    disable_images=bool(proxy_str)
+                )
                 
                 domain = "https://passport.jlc.com" if "passport" in url else "https://m.jlc.com"
                 try:
@@ -703,7 +574,11 @@ def register_account(hzm, config, email_index, fixed_password):
 
     try:
         proxy_str = None 
-        driver = bm.new_driver()
+        
+        driver = create_chrome_driver(
+            create_new_profile_dir(),
+            legacy_ua=legacy_ua
+        )
 
         phone = None
         sms_code = None
@@ -711,7 +586,7 @@ def register_account(hzm, config, email_index, fixed_password):
         for get_sms_loop in range(100):
             log(f"🌐 打开注册页面... (本阶段第 {get_sms_loop + 1} 次尝试)")
             safe_get_page(driver, "https://passport.jlc.com/m/register")
-            time.sleep(2)
+            time.sleep(random.uniform(3.5, 5.5))
             
             phone = None
             for phone_attempt in range(20):
@@ -751,73 +626,57 @@ def register_account(hzm, config, email_index, fixed_password):
         if not sms_code:
             raise Exception("连续 100 次获取短信验证码超时，放弃本次注册任务")
 
-        # ==================== 代理获取+页面加载 最多重试3次 ====================
-        log("🔄 释放浏览器并获取代理...")
+        log("🔄 释放浏览器并获取代理（超时: 60s）...")
         try:
             temp_cookies_1 = driver.get_cookies()
         except:
             temp_cookies_1 = []
-        
-        # 使用 manager 安全销毁
-        bm.kill_driver(driver)
+        force_kill_driver(driver)
         driver = None
         
-        proxy_loaded = False
-        for proxy_attempt in range(3):
-            log(f"🔄 代理+页面加载尝试 ({proxy_attempt + 1}/3)...")
-            
-            proxy_str = get_valid_proxy(timeout=45)
-            if not proxy_str:
-                log(f"⚠ 第 {proxy_attempt + 1}/3 次获取代理超时，重试...")
-                continue
-                
-            ip_get_time = time.time()
-            
-            driver = bm.new_driver(proxy_str)
-            
-            log("🌐 [代理] 重建浏览器环境，跨域恢复 Cookie 状态...")
-            try:
-                driver.set_page_load_timeout(10)
-                try:
-                    driver.get("https://passport.jlc.com/favicon.ico")
-                except TimeoutException:
-                    pass 
-                
-                valid_keys = ['name', 'value', 'domain', 'path', 'secure', 'httpOnly', 'expiry', 'sameSite']
-                for c in temp_cookies_1:
-                    clean_c = {k: v for k, v in c.items() if k in valid_keys}
-                    try: driver.add_cookie(clean_c)
-                    except: pass
-                    
-                driver.set_page_load_timeout(20)
-                safe_get_page(driver, "https://passport.jlc.com/m/register")
-            except BrowserError as be:
-                log(f"⚠ 第 {proxy_attempt + 1}/3 次代理浏览器加载页面崩溃: {be}")
-                bm.kill_driver(driver)
-                driver = None
-                continue
-            except Exception as e:
-                log(f"⚠ 第 {proxy_attempt + 1}/3 次代理加载异常: {e}")
-                bm.kill_driver(driver)
-                driver = None
-                continue
-                
-            if (time.time() - ip_get_time) > 50:
-                log(f"⚠ 第 {proxy_attempt + 1}/3 次代理 IP 寿命（60秒）已耗尽，重新获取代理...")
-                bm.kill_driver(driver)
-                driver = None
-                continue
-            
-            # 成功走到这里，说明代理正常、页面加载完毕、时间充裕
-            proxy_loaded = True
-            break
-        
-        if not proxy_loaded:
+        proxy_str = get_valid_proxy(timeout=45)
+        if not proxy_str:
             hzm.release_phone(phone)
-            raise Exception("连续 3 次获取代理或加载页面均失败，放弃当前注册任务")
+            raise Exception("更换新代理等待过久，已超时重新开始")
+            
+        ip_get_time = time.time()
+            
+        driver = create_chrome_driver(
+            create_new_profile_dir(),
+            proxy_str=proxy_str,
+            legacy_ua=legacy_ua,
+            disable_images=True
+        )
+        
+        log("🌐 [代理] 重建浏览器环境，跨域恢复 Cookie 状态...")
+        try:
+            driver.set_page_load_timeout(10)
+            try:
+                driver.get("https://passport.jlc.com/favicon.ico")
+            except TimeoutException:
+                pass 
+            
+            valid_keys = ['name', 'value', 'domain', 'path', 'secure', 'httpOnly', 'expiry', 'sameSite']
+            for c in temp_cookies_1:
+                clean_c = {k: v for k, v in c.items() if k in valid_keys}
+                try: driver.add_cookie(clean_c)
+                except: pass
+                
+            driver.set_page_load_timeout(20)
+            safe_get_page(driver, "https://passport.jlc.com/m/register")
+        except BrowserError as be:
+            hzm.release_phone(phone)
+            raise be
+        except Exception as e:
+            hzm.release_phone(phone)
+            raise Exception(f"新代理加载页面失败或未知异常: {e}")
+            
+        if (time.time() - ip_get_time) > 50:
+            hzm.release_phone(phone)
+            raise Exception("页面加载完毕但代理 IP 寿命（60秒）已耗尽，放弃当前任务，重新开始注册")
             
         driver.set_page_load_timeout(20)
-        time.sleep(1)
+        time.sleep(random.uniform(1.5, 2.5))
 
         log("📡 发送 get-init-session...")
         r2 = safe_fetch("https://passport.jlc.com/api/cas/register/get-init-session", "POST", {
@@ -825,6 +684,10 @@ def register_account(hzm, config, email_index, fixed_password):
         })
         if r2.get("code") != 200:
             raise Exception(f"Session 初始化失败: {r2}")
+
+        human_delay = random.uniform(1.5, 3.0)
+        log(f"⏳ 模拟真实输入，等待 {human_delay:.1f} 秒...")
+        time.sleep(human_delay)
         
         log("📡 发送 register/submit...")
         r3 = safe_fetch("https://passport.jlc.com/api/cas/register/submit", "POST", {
@@ -878,11 +741,14 @@ def register_account(hzm, config, email_index, fixed_password):
         safe_fetch("https://passport.jlc.com/api/cas/secure/check-callback-url", "POST", {"callbackUrl": "https://m.jlc.com"})
 
         log("🔄 注册阶段结束，关闭代理浏览器，无代理进行归属设置...")
-        bm.kill_driver(driver)
+        force_kill_driver(driver)
         driver = None
         time.sleep(2)
 
-        driver = bm.new_driver()
+        driver = create_chrome_driver(
+            create_new_profile_dir(),
+            legacy_ua=legacy_ua
+        )
         
         log("🌐 浏览器已启动，准备执行新注册账号登录流程...")
         login_success = False
@@ -922,11 +788,7 @@ def register_account(hzm, config, email_index, fixed_password):
                 
                 for wait_idx in range(5):
                     time.sleep(2)
-                    try:
-                        page_src = driver.page_source
-                    except:
-                        raise BrowserError("获取 page_source 时 renderer 崩溃")
-                    if "客编" in page_src or "customerCode" in page_src or customer_code in page_src:
+                    if "客编" in driver.page_source or "customerCode" in driver.page_source or customer_code in driver.page_source:
                         log("✅ 验证登录态成功！")
                         login_success = True
                         break
@@ -938,8 +800,6 @@ def register_account(hzm, config, email_index, fixed_password):
                 else:
                     raise Exception("登录态未能成功在页面中渲染完毕，可能被隐式拦截或重定向失败")
                     
-            except BrowserError:
-                raise
             except Exception as e:
                 log(f"⚠ 登录尝试 {login_attempt+1} 失败: {e}")
                 time.sleep(3)
@@ -1034,9 +894,11 @@ def register_account(hzm, config, email_index, fixed_password):
 
                 attr_name = random_chinese_chars(3)
                 
+                payload_attr_name = attr_name
+                
                 log(f"📡 发送 configAttribution 归属设置主请求...")
                 r_attr = dp_fetch(driver, "https://member.jlc.com/api/integrated/customerAttribution/configAttribution", "POST", {
-                    "source": "JLC", "smsCode": sms_code2.strip(), "customerType": 2, "attributionPersonName": attr_name
+                    "source": "JLC", "smsCode": sms_code2.strip(), "customerType": 2, "attributionPersonName": payload_attr_name
                 }, extra_headers=extra_headers)
                 
                 if r_attr.get("success") is True and r_attr.get("code") == 200:
@@ -1052,8 +914,6 @@ def register_account(hzm, config, email_index, fixed_password):
                     break
                 else:
                     raise Exception(f"验证归属失败: {r_check}")
-            except BrowserError:
-                raise
             except Exception as e:
                 log(f"⚠ 归属设置第 {attempt+1} 次尝试失败: {e}")
                 if attempt == 2:
@@ -1114,8 +974,6 @@ def register_account(hzm, config, email_index, fixed_password):
                     break
                 else:
                     raise Exception(f"邮箱最终绑定请求失败: {r_ce}")
-            except BrowserError:
-                raise
             except Exception as e:
                 log(f"⚠ 绑定邮箱第 {attempt+1} 次尝试失败: {e}")
                 if attempt == 3:
@@ -1136,9 +994,11 @@ def register_account(hzm, config, email_index, fixed_password):
         log(f"❌ 注册流程执行业务异常断开: {e}")
         return None
     finally:
-        # 统一由 manager 清理所有资源
-        bm.cleanup_all()
-
+        force_kill_driver(driver)
+        driver = None
+        time.sleep(1)
+        for d in profile_dirs:
+            shutil.rmtree(d, ignore_errors=True)
 
 def main():
     if len(sys.argv) < 4:
@@ -1165,9 +1025,6 @@ def main():
         log("❌ 余额不足 0.3 元，拒绝运行")
         sys.exit(1)
 
-    # 启动前清理所有残留进程
-    kill_all_zombie_chromes()
-
     success_accounts = []
     success_count = 0
     consecutive_failures = 0  
@@ -1178,10 +1035,7 @@ def main():
         log(f"🚀 开始注册任务进度: {success_count + 1}/{reg_count} (当前账号尝试第 {current_attempt} 次)")
         log(f"{'='*50}")
 
-        # 每次注册前主动清理僵尸进程 + 垃圾回收
-        if success_count > 0 or consecutive_failures > 0:
-            kill_all_zombie_chromes()
-            gc.collect()
+        cleanup_zombie_chrome()
 
         current_email_index = start_email_num + success_count
         res = register_account(hzm, config, current_email_index, fixed_password)
@@ -1203,13 +1057,11 @@ def main():
                 
         elif res and res.get("error") == "browser_error":
             log("⚠ 检测到浏览器打不开或页面加载崩溃，本次失败不计入重试次数")
-            kill_all_zombie_chromes()  # 出错后立即清理
             time.sleep(3)
             continue
             
         else:
             consecutive_failures += 1  
-            kill_all_zombie_chromes()  # 出错后立即清理
             
             if consecutive_failures >= 10:
                 log(f"❌ 触发安全保护：已连续失败 {consecutive_failures} 次，为防止浪费资源，任务强行终止！")
@@ -1219,10 +1071,6 @@ def main():
             time.sleep(10)
 
     log("\n✨ 任务运行结束！")
-    
-    # 最终清理
-    kill_all_zombie_chromes()
-    
     if success_accounts:
         log("以下为成功注册的账号列表：")
         for acc in success_accounts:
