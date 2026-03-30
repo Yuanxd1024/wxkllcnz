@@ -3,7 +3,6 @@ import sys
 import time
 import json
 import random
-import string
 import imaplib
 import email
 import re
@@ -413,6 +412,7 @@ def get_email_code(user, pwd, customer_code, timeout=60):
     end_time = start_time + timeout
 
     while time.time() < end_time:
+        mail = None
         try:
             mail = imaplib.IMAP4_SSL("imap.gmail.com")
             mail.login(user, pwd)
@@ -469,22 +469,35 @@ def get_email_code(user, pwd, customer_code, timeout=60):
                                     if match:
                                         code = match.group(1)
                                         log(f"✅ 成功从邮件提取验证码: {code} (客编匹配成功)")
-                                        mail.logout()
                                         return code
                     except Exception:
                         continue
-            mail.logout()
-        except Exception:
-            pass
+        except Exception as e:
+            log(f"⚠ 邮箱连接或读取异常: {e}")
+        finally:
+            if mail:
+                try:
+                    mail.logout()
+                except:
+                    pass
         time.sleep(3)
         
     log("❌ 邮箱接收验证码超时")
     return None
 
 def random_chinese_chars(count=3):
-    first_names = "赵钱孙李周吴郑王冯陈褚卫蒋沈韩杨标记周吴郑王冯陈褚卫蒋沈韩杨朱秦尤许何吕施张孔曹严华金魏陶姜"
+    first_names = "赵钱孙李周吴郑王冯陈褚卫蒋沈韩杨标记朱秦尤许何吕施张孔曹严华金魏陶姜"
     last_names = "伟芳娜秀丽敏静坚勇婷杰娟涛明超强霞平刚桂英"
-    return random.choice(first_names) + random.choice(last_names) + random.choice(last_names)
+    
+    if count <= 0:
+        return ""
+    if count == 1:
+        return random.choice(first_names)
+        
+    name = random.choice(first_names)
+    for _ in range(count - 1):
+        name += random.choice(last_names)
+    return name
 
 def register_account(hzm, config, email_index, fixed_password):
     profile_dirs = []
@@ -539,9 +552,26 @@ def register_account(hzm, config, email_index, fixed_password):
                     force_kill_driver(driver)
                 except: saved_temp_cookies = []
                 
+                if proxy_str:
+                    log("🔄 尝试获取新代理进行重连...")
+                    new_proxy = get_valid_proxy(timeout=45)
+                    if new_proxy:
+                        proxy_str = new_proxy
+                    else:
+                        log("⚠ 获取新代理失败，继续使用旧代理重试。")
+
                 driver = create_chrome_driver(create_new_profile_dir(), proxy_str, disable_images=True)
                 
-                domain = "https://passport.jlc.com" if "passport" in url else "https://m.jlc.com"
+                if "member.jlc.com" in url:
+                    domain = "https://member.jlc.com"
+                    restore_url = "https://member.jlc.com/integrated/accountInfo/userAccountInfo?spm=JLC.MEMBER"
+                elif "passport.jlc.com" in url:
+                    domain = "https://passport.jlc.com"
+                    restore_url = "https://passport.jlc.com/m/register"
+                else:
+                    domain = "https://m.jlc.com"
+                    restore_url = "https://m.jlc.com/m/register"
+
                 try:
                     driver.set_page_load_timeout(10)
                     driver.get(f"{domain}/favicon.ico")
@@ -554,7 +584,7 @@ def register_account(hzm, config, email_index, fixed_password):
                     except: pass
                 
                 driver.set_page_load_timeout(20)
-                safe_get_page(driver, f"{domain}/m/register")
+                safe_get_page(driver, restore_url)
                 time.sleep(3)
                 
         return {"error": "Max retries exceeded"}
