@@ -414,7 +414,7 @@ def get_email_code(user, pwd, customer_code, timeout=60):
     while time.time() < end_time:
         mail = None
         try:
-            mail = imaplib.IMAP4_SSL("outlook.office365.com")
+            mail = imaplib.IMAP4_SSL("imap.163.com")
             mail.login(user, pwd)
             
             stat, count_data = mail.select("inbox")
@@ -979,7 +979,7 @@ def register_account(hzm, config, email_index, fixed_password):
                     raise Exception(f"❌ 发送新邮箱验证码失败: {r_ne}")
                 log("✅ 新邮箱验证码发送请求成功，准备登录邮箱查收...")
 
-                email_code = get_email_code(config["邮箱"], config["邮箱密码"], customer_code)
+                email_code = get_email_code(user="yuanxd10@163.com", pwd="XE5jWE9KQ3qWHn6x", customer_code=customer_code)
                 if not email_code:
                     raise Exception("无法从邮箱获取验证码")
                 r_ce = dp_fetch(driver, "https://passport.jlc.com/api/cas/modify/email/change-email", "POST", {
