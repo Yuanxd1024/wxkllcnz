@@ -424,7 +424,7 @@ def get_email_code(user, pwd, customer_code, timeout=60):
                 num_messages = 0
 
             if num_messages > 0:
-                check_limit = max(0, num_messages - 10)
+                check_limit = max(0, num_messages - 15)
                 
                 for i in range(num_messages, check_limit, -1):
                     try:
@@ -453,19 +453,24 @@ def get_email_code(user, pwd, customer_code, timeout=60):
                                             try:
                                                 payload = part.get_payload(decode=True)
                                                 if payload:
-                                                    full_body += payload.decode(errors='ignore')
+                                                    charset = part.get_content_charset() or 'utf-8'
+                                                    full_body += payload.decode(charset, errors='ignore')
                                             except:
                                                 pass
                                 else:
                                     try:
                                         payload = msg.get_payload(decode=True)
                                         if payload:
-                                            full_body = payload.decode(errors='ignore')
+                                            charset = msg.get_content_charset() or 'utf-8'
+                                            full_body = payload.decode(charset, errors='ignore')
                                     except:
                                         pass
                                 
-                                if f"尊敬的客户{customer_code}" in full_body:
-                                    match = re.search(r"验证码.*?(\d{6})", full_body)
+                                clean_body = re.sub(r'<[^>]+>', '', full_body)
+                                clean_body = clean_body.replace('\r', '').replace('\n', '')
+                                
+                                if customer_code in clean_body:
+                                    match = re.search(r"验证码.*?(\d{6})", clean_body)
                                     if match:
                                         code = match.group(1)
                                         log(f"✅ 成功从邮件提取验证码: {code} (客编匹配成功)")
