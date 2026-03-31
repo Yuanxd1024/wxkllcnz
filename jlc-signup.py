@@ -442,7 +442,7 @@ def get_email_code(user, pwd, customer_code, timeout=60):
                                 except:
                                     pass
 
-                                if email_timestamp > 0 and email_timestamp < (start_time - 5):
+                                if email_timestamp > 0 and email_timestamp < (start_time - 300):
                                     continue
                                 
                                 full_body = ""
