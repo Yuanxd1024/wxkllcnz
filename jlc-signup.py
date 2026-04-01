@@ -411,72 +411,87 @@ def get_email_code(user, pwd, customer_code, timeout=60):
     start_time = time.time()
     end_time = start_time + timeout
 
+    def extract_text(message):
+        """递归解析邮件内容，解决转发邮件套娃结构(rfc822)"""
+        content = ""
+        for part in message.walk():
+            ctype = part.get_content_type()
+            # 如果是纯文本或HTML
+            if ctype in ["text/plain", "text/html"]:
+                payload = part.get_payload(decode=True)
+                if payload:
+                    charset = part.get_content_charset() or 'utf-8'
+                    if charset.lower() == 'gb2312': 
+                        charset = 'gbk' # 解决python不支持gb2312解码的问题
+                    try:
+                        content += payload.decode(charset, errors='ignore')
+                    except:
+                        pass
+            # 如果是嵌套的邮件（转发邮件最爱用的格式）
+            elif ctype == "message/rfc822":
+                sub_msgs = part.get_payload()
+                if isinstance(sub_msgs, list):
+                    for sm in sub_msgs:
+                        content += extract_text(sm)
+        return content
+
     while time.time() < end_time:
         mail = None
         try:
             mail = imaplib.IMAP4_SSL("imap.163.com")
             mail.login(user, pwd)
+            mail.select("INBOX")
             
-            stat, count_data = mail.select("inbox")
-            try:
-                num_messages = int(count_data[0])
-            except:
-                num_messages = 0
-
-            if num_messages > 0:
-                check_limit = max(0, num_messages - 15)
+            # 不再基于 count 计算索引，改用更加准确的 search 获取真实 msg_id
+            typ, data = mail.search(None, 'ALL')
+            if typ == 'OK' and data[0]:
+                msg_ids = data[0].split()
+                # 截取最新收到的 15 封邮件进行核对
+                check_ids = msg_ids[-15:]
+                check_ids.reverse()
                 
-                for i in range(num_messages, check_limit, -1):
-                    try:
-                        typ, msg_data = mail.fetch(str(i), '(RFC822)')
-                        for response_part in msg_data:
-                            if isinstance(response_part, tuple):
-                                msg = email.message_from_bytes(response_part[1])
-                                
-                                date_str = msg.get("Date")
-                                email_timestamp = 0
-                                try:
-                                    if date_str:
-                                        email_dt = parsedate_to_datetime(date_str)
-                                        email_timestamp = email_dt.timestamp()
-                                except:
-                                    pass
+                for msg_id in check_ids:
+                    typ, msg_data = mail.fetch(msg_id, '(RFC822)')
+                    for response_part in msg_data:
+                        if isinstance(response_part, tuple):
+                            msg = email.message_from_bytes(response_part[1])
+                            
+                            # 时间戳校验，容忍度放宽到 10 分钟 (600秒)
+                            date_str = msg.get("Date")
+                            email_timestamp = 0
+                            try:
+                                if date_str:
+                                    email_dt = parsedate_to_datetime(date_str)
+                                    email_timestamp = email_dt.timestamp()
+                            except:
+                                pass
 
-                                if email_timestamp > 0 and email_timestamp < (start_time - 300):
-                                    continue
-                                
-                                full_body = ""
-                                if msg.is_multipart():
-                                    for part in msg.walk():
-                                        content_type = part.get_content_type()
-                                        if content_type in ["text/plain", "text/html"]:
-                                            try:
-                                                payload = part.get_payload(decode=True)
-                                                if payload:
-                                                    charset = part.get_content_charset() or 'utf-8'
-                                                    full_body += payload.decode(charset, errors='ignore')
-                                            except:
-                                                pass
-                                else:
-                                    try:
-                                        payload = msg.get_payload(decode=True)
-                                        if payload:
-                                            charset = msg.get_content_charset() or 'utf-8'
-                                            full_body = payload.decode(charset, errors='ignore')
-                                    except:
-                                        pass
-                                
-                                clean_body = re.sub(r'<[^>]+>', '', full_body)
-                                clean_body = clean_body.replace('\r', '').replace('\n', '')
-                                
-                                if customer_code in clean_body:
+                            if email_timestamp > 0 and email_timestamp < (start_time - 600):
+                                continue
+                            
+                            # 递归提取所有文本
+                            full_body = extract_text(msg)
+                            
+                            # 洗刷多余的换行、空格和 HTML 标签，降维成纯文字
+                            clean_body = re.sub(r'<[^>]+>', '', full_body).replace('\r', '').replace('\n', '').replace(' ', '')
+                            
+                            if customer_code in clean_body:
+                                match = re.search(r"验证码.*?(\d{6})", clean_body)
+                                if match:
+                                    code = match.group(1)
+                                    log(f"✅ 成功从邮件提取验证码: {code} (客编匹配成功)")
+                                    return code
+                            else:
+                                # 极端情况兜底：如果转发导致客编被截断，但有极度符合立创邮件的特征
+                                if "立创" in clean_body or "jlc" in clean_body.lower() or "验证码" in clean_body:
                                     match = re.search(r"验证码.*?(\d{6})", clean_body)
                                     if match:
-                                        code = match.group(1)
-                                        log(f"✅ 成功从邮件提取验证码: {code} (客编匹配成功)")
-                                        return code
-                    except Exception:
-                        continue
+                                        # 兜底机制下必须时间新鲜才采纳
+                                        if email_timestamp == 0 or email_timestamp > (start_time - 120):
+                                            code = match.group(1)
+                                            log(f"⚠ 未完全匹配客编，但提取到疑似最新验证码: {code}")
+                                            return code
+
         except Exception as e:
             log(f"⚠ 邮箱连接或读取异常: {e}")
         finally:
@@ -485,7 +500,8 @@ def get_email_code(user, pwd, customer_code, timeout=60):
                     mail.logout()
                 except:
                     pass
-        time.sleep(3)
+        # 频率放缓到5秒，防止频繁登录被163防火墙拦截
+        time.sleep(5)
         
     log("❌ 邮箱接收验证码超时")
     return None
