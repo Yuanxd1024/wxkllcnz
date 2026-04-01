@@ -440,58 +440,69 @@ def get_email_code(user, pwd, customer_code, timeout=60):
         try:
             mail = imaplib.IMAP4_SSL("imap.163.com")
             mail.login(user, pwd)
-            mail.select("INBOX")
             
-            # 不再基于 count 计算索引，改用更加准确的 search 获取真实 msg_id
-            typ, data = mail.search(None, 'ALL')
-            if typ == 'OK' and data[0]:
-                msg_ids = data[0].split()
-                # 截取最新收到的 15 封邮件进行核对
-                check_ids = msg_ids[-15:]
-                check_ids.reverse()
+            # 使用原先绝对可以成功进入邮箱的写法，并增加防错兜底
+            stat, count_data = mail.select("inbox")
+            if stat != 'OK':
+                stat, count_data = mail.select("INBOX")
                 
-                for msg_id in check_ids:
-                    typ, msg_data = mail.fetch(msg_id, '(RFC822)')
-                    for response_part in msg_data:
-                        if isinstance(response_part, tuple):
-                            msg = email.message_from_bytes(response_part[1])
-                            
-                            # 时间戳校验，容忍度放宽到 10 分钟 (600秒)
-                            date_str = msg.get("Date")
-                            email_timestamp = 0
-                            try:
-                                if date_str:
-                                    email_dt = parsedate_to_datetime(date_str)
-                                    email_timestamp = email_dt.timestamp()
-                            except:
-                                pass
+            if stat == 'OK':
+                try:
+                    num_messages = int(count_data[0])
+                except:
+                    num_messages = 0
 
-                            if email_timestamp > 0 and email_timestamp < (start_time - 600):
-                                continue
-                            
-                            # 递归提取所有文本
-                            full_body = extract_text(msg)
-                            
-                            # 洗刷多余的换行、空格和 HTML 标签，降维成纯文字
-                            clean_body = re.sub(r'<[^>]+>', '', full_body).replace('\r', '').replace('\n', '').replace(' ', '')
-                            
-                            if customer_code in clean_body:
-                                match = re.search(r"验证码.*?(\d{6})", clean_body)
-                                if match:
-                                    code = match.group(1)
-                                    log(f"✅ 成功从邮件提取验证码: {code} (客编匹配成功)")
-                                    return code
-                            else:
-                                # 极端情况兜底：如果转发导致客编被截断，但有极度符合立创邮件的特征
-                                if "立创" in clean_body or "jlc" in clean_body.lower() or "验证码" in clean_body:
-                                    match = re.search(r"验证码.*?(\d{6})", clean_body)
-                                    if match:
-                                        # 兜底机制下必须时间新鲜才采纳
-                                        if email_timestamp == 0 or email_timestamp > (start_time - 120):
+                if num_messages > 0:
+                    check_limit = max(0, num_messages - 15)
+                    
+                    for i in range(num_messages, check_limit, -1):
+                        try:
+                            typ, msg_data = mail.fetch(str(i), '(RFC822)')
+                            for response_part in msg_data:
+                                if isinstance(response_part, tuple):
+                                    msg = email.message_from_bytes(response_part[1])
+                                    
+                                    # 时间戳校验，容忍度放宽到 10 分钟 (600秒)
+                                    date_str = msg.get("Date")
+                                    email_timestamp = 0
+                                    try:
+                                        if date_str:
+                                            email_dt = parsedate_to_datetime(date_str)
+                                            email_timestamp = email_dt.timestamp()
+                                    except:
+                                        pass
+
+                                    if email_timestamp > 0 and email_timestamp < (start_time - 600):
+                                        continue
+                                    
+                                    # 递归提取所有文本
+                                    full_body = extract_text(msg)
+                                    
+                                    # 洗刷多余的换行、空格和 HTML 标签，降维成纯文字
+                                    clean_body = re.sub(r'<[^>]+>', '', full_body).replace('\r', '').replace('\n', '').replace(' ', '')
+                                    
+                                    if customer_code in clean_body:
+                                        match = re.search(r"验证码.*?(\d{6})", clean_body)
+                                        if match:
                                             code = match.group(1)
-                                            log(f"⚠ 未完全匹配客编，但提取到疑似最新验证码: {code}")
+                                            log(f"✅ 成功从邮件提取验证码: {code} (客编匹配成功)")
                                             return code
+                                    else:
+                                        # 极端情况兜底：如果转发导致客编被截断，但有极度符合立创邮件的特征
+                                        if "立创" in clean_body or "jlc" in clean_body.lower() or "验证码" in clean_body:
+                                            match = re.search(r"验证码.*?(\d{6})", clean_body)
+                                            if match:
+                                                # 兜底机制下必须时间新鲜才采纳
+                                                if email_timestamp == 0 or email_timestamp > (start_time - 120):
+                                                    code = match.group(1)
+                                                    log(f"⚠ 未完全匹配客编，但提取到疑似最新验证码: {code}")
+                                                    return code
 
+                        except Exception:
+                            continue
+            else:
+                log(f"⚠ 无法选中收件箱，返回状态: {stat}")
+                
         except Exception as e:
             log(f"⚠ 邮箱连接或读取异常: {e}")
         finally:
