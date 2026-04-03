@@ -26,6 +26,13 @@ jobs:
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
     steps:
+      - name: '检查仓库公开状态'
+        run: |
+          if [ "${{ github.event.repository.private }}" == "true" ]; then
+            echo "::error::检测到当前仓库为私有状态，任务已拒绝运行，你也不想让账单爆表对吧，请公开仓库后再试。"
+            exit 1
+          fi
+
       - name: '检查输入合法性并动态配置矩阵'
         id: set-matrix
         run: |
