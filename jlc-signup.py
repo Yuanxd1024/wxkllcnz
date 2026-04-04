@@ -937,7 +937,7 @@ def register_account(hzm, config, email_index, fixed_password):
                     log("❌ 超过最大重试，跳过归属设置")
 
         log("🌐 开始绑定邮箱...")
-        for attempt in range(4):
+        for attempt in range(5):
             try:
                 safe_get_page(driver, "https://passport.jlc.com/set-email")
                 time.sleep(3)
@@ -993,7 +993,7 @@ def register_account(hzm, config, email_index, fixed_password):
                     raise Exception(f"邮箱最终绑定请求失败: {r_ce}")
             except Exception as e:
                 log(f"⚠ 绑定邮箱第 {attempt+1} 次尝试失败: {e}")
-                if attempt == 3:
+                if attempt == 4:
                     log("❌ 超过最大重试，绑定邮箱失败")
                     account_info["email"] = "未绑定"
 
