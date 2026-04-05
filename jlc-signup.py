@@ -554,7 +554,7 @@ def register_account(hzm, config, email_index, fixed_password):
                 
                 if proxy_str:
                     log("🔄 尝试获取新代理进行重连...")
-                    new_proxy = get_valid_proxy(timeout=45)
+                    new_proxy = get_valid_proxy(timeout=300)
                     if new_proxy:
                         proxy_str = new_proxy
                     else:
@@ -650,7 +650,7 @@ def register_account(hzm, config, email_index, fixed_password):
         proxy_success = False
         for proxy_attempt in range(3):
             log(f"🔗 开始获取代理并重建环境 (尝试 {proxy_attempt+1}/3)...")
-            proxy_str = get_valid_proxy(timeout=45)
+            proxy_str = get_valid_proxy(timeout=300)
             if not proxy_str:
                 log("⚠ 获取新代理超时或失败。")
                 continue
