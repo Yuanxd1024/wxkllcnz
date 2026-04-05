@@ -11,6 +11,8 @@ import requests
 import tempfile
 import shutil
 import psutil
+import threading
+import queue
 from datetime import datetime
 from email.header import decode_header
 from email.utils import parsedate_to_datetime
@@ -362,31 +364,51 @@ def call_aliv3_script(script_name, proxy_str, timeout_seconds=180):
     ticket = None
     output_buffer = []
     
+    q = queue.Queue()
+    
+    def enqueue_output(out, queue_obj):
+        try:
+            for line in iter(out.readline, ''):
+                queue_obj.put(line)
+        except Exception:
+            pass
+        finally:
+            try:
+                out.close()
+            except Exception:
+                pass
+
+    t = threading.Thread(target=enqueue_output, args=(process.stdout, q))
+    t.daemon = True
+    t.start()
+    
     while True:
         if time.time() - start_time > timeout_seconds:
             output_buffer.append(f"❌ 脚本执行超时 ({timeout_seconds}s)")
             process.kill()
             break
             
-        line = process.stdout.readline()
-        if not line:
+        try:
+            line = q.get(timeout=0.05)
+        except queue.Empty:
             if process.poll() is not None:
                 break
-            else:
-                time.sleep(0.05)
-                continue
+            continue
         
         clean_line = line.strip()
         if clean_line:
             output_buffer.append(clean_line) 
             
         if "SUCCESS: Obtained CaptchaTicket:" in line:
-            next_line = process.stdout.readline()
-            if next_line:
-                ticket = next_line.strip()
-                log("✅ 成功截获 CaptchaTicket")
-                process.terminate()
-                return ticket
+            try:
+                next_line = q.get(timeout=5.0)
+                if next_line:
+                    ticket = next_line.strip()
+                    log("✅ 成功截获 CaptchaTicket")
+                    process.terminate()
+                    return ticket
+            except queue.Empty:
+                pass
                 
         if "captchaTicket" in line:
             match = re.search(r'"captchaTicket"\s*:\s*"([^"]+)"', line)
