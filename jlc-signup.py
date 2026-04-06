@@ -172,7 +172,7 @@ class HaoZhuMa:
             return -1
 
     def get_phone(self, phone=None):
-        base_url = f"{self.host}/sms/?api=getPhone&token={self.token}&sid={self.sid}"
+        base_url = f"{self.host}/sms/?api=getPhone&token={self.token}&sid={self.sid}&auther=zhangmonday"
         url = f"{base_url}&phone={phone}" if phone else f"{base_url}&ascription=2&exclude=192"
         try:
             resp = requests.get(url, timeout=15).json()
