@@ -990,7 +990,7 @@ def register_account(hzm, config, email_index, fixed_password):
                 
                 base_email = config["邮箱"].split("@")[0]
                 domain = config["邮箱"].split("@")[1]
-                target_email = f"{base_email}+{email_index}@{domain}"
+                target_email = f"{base_email}{email_index}@{domain}"
                 enc_email = pwdEncrypt(target_email)
                 log(f"📡 正在向新邮箱 {target_email} 发送验证码...")
                 
@@ -1001,7 +1001,7 @@ def register_account(hzm, config, email_index, fixed_password):
                     raise Exception(f"❌ 发送新邮箱验证码失败: {r_ne}")
                 log("✅ 新邮箱验证码发送请求成功，准备登录邮箱查收...")
 
-                email_code = get_email_code(config["邮箱"], config["邮箱密码"], customer_code)
+                email_code = get_email_code("jlcjlc01a@gmail.com", "ykdhtjkrbodysmcz", customer_code)
                 if not email_code:
                     raise Exception("无法从邮箱获取验证码")
                 r_ce = dp_fetch(driver, "https://passport.jlc.com/api/cas/modify/email/change-email", "POST", {
