@@ -31,7 +31,7 @@ jobs:
               print("Error: 账号与密码数量不匹配")
               exit(1)
               
-          batch_size = 50
+          batch_size = 30
           matrix = []
           group_idx = 1
           for i in range(0, len(users), batch_size):
