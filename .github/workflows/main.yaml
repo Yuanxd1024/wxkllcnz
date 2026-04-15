@@ -147,7 +147,7 @@ jobs:
           path: batch-${{ matrix.batch_info.batch }}-account.txt
           archive: false
           if-no-files-found: ignore
-          retention-days: 1
+          retention-days: 14
 
 # Job 3: 汇总与清理阶段
   merge_and_clean:
@@ -190,7 +190,7 @@ jobs:
           path: ${{ steps.merge.outputs.filename }}
           archive: false
           if-no-files-found: ignore
-          retention-days: 10
+          retention-days: 14
 
       - name: '设置Python环境用于推送'
         if: steps.merge.outputs.has_data == 'true'
