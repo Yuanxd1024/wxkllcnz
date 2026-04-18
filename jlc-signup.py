@@ -253,8 +253,23 @@ def get_valid_proxy(timeout=None):
                     if test_resp.status_code == 200:
                         log("✅ 代理测试成功，延迟正常")
                         return proxy_str
-                except Exception:
-                    log("⚠ 代理测试超时或失败，重新获取...")
+                    else:
+                        log(f"⚠ 代理测试失败，返回状态码: {test_resp.status_code}，重新获取...")
+                        continue
+                except requests.exceptions.ConnectTimeout:
+                    log("⚠ 代理测试连接超时，重新获取...")
+                    continue
+                except requests.exceptions.ReadTimeout:
+                    log("⚠ 代理测试读取超时，重新获取...")
+                    continue
+                except requests.exceptions.ProxyError as e:
+                    log(f"⚠ 代理拒绝连接或代理错误 ({e})，重新获取...")
+                    continue
+                except requests.exceptions.ConnectionError as e:
+                    log(f"⚠ 代理连接失败 ({e})，重新获取...")
+                    continue
+                except Exception as e:
+                    log(f"⚠ 代理测试未知错误 ({type(e).__name__}: {e})，重新获取...")
                     continue
             else:
                 log(f"❌ 代理API返回异常内容: {data}")
