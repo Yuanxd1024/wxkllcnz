@@ -93,7 +93,7 @@ def cleanup_zombie_chrome():
         except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
             continue
 
-def create_chrome_driver(profile_dir, proxy_str=None, disable_images=False):
+def create_chrome_driver(profile_dir, proxy_str=None, disable_images=True):
     options = Options()
     options.page_load_strategy = 'eager'
     options.add_argument(f"--user-data-dir={profile_dir}")
@@ -628,7 +628,7 @@ def register_account(hzm, config, email_index, fixed_password):
 
     try:
         proxy_str = None 
-        driver = create_chrome_driver(create_new_profile_dir(), proxy_str, disable_images=False)
+        driver = create_chrome_driver(create_new_profile_dir(), proxy_str, disable_images=True)
 
         phone = None
         sms_code = None
@@ -802,7 +802,7 @@ def register_account(hzm, config, email_index, fixed_password):
         except: pass
         time.sleep(2)
 
-        driver = create_chrome_driver(create_new_profile_dir(), proxy_str=None, disable_images=False)
+        driver = create_chrome_driver(create_new_profile_dir(), proxy_str=None, disable_images=True)
         
         log("🌐 浏览器已启动，准备执行新注册账号登录流程...")
         login_success = False
