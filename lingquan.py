@@ -17,7 +17,6 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import NoAlertPresentException, UnexpectedAlertPresentException, TimeoutException, WebDriverException, NoSuchElementException
 
-# 导入SM2加密方法
 try:
     from Utils import pwdEncrypt
     print("✅ 成功加载 SM2 加密依赖")
@@ -52,14 +51,12 @@ def create_chrome_driver(user_data_dir=None):
     """创建Chrome浏览器实例"""
     chrome_options = Options()
 
-    # --- 防检测核心配置 ---
     chrome_options.add_argument("--headless=new")
     chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
     chrome_options.add_argument("--disable-blink-features=AutomationControlled")
     chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
     chrome_options.add_experimental_option('useAutomationExtension', False)
 
-    # --- 稳定性配置 ---
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--disable-gpu")
@@ -67,7 +64,6 @@ def create_chrome_driver(user_data_dir=None):
     chrome_options.add_argument("--disable-extensions")
     chrome_options.add_argument("--window-size=1920,1080")
 
-    # --- 启用性能日志，用于捕获网络请求头中的 Secretkey ---
     chrome_options.set_capability('goog:loggingPrefs', {'performance': 'ALL'})
 
     if user_data_dir:
@@ -78,7 +74,6 @@ def create_chrome_driver(user_data_dir=None):
     driver.set_page_load_timeout(60)
     driver.set_script_timeout(60)
 
-    # --- CDP 命令防检测 ---
     driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
         "source": """
             Object.defineProperty(navigator, 'webdriver', {
@@ -625,20 +620,17 @@ def claim_3dp_30_20(driver, coupon_result):
         code = response.get('code')
         message = response.get('message') or ''
 
-        # 领取成功
         if success == True and code == 200:
             log(f"✅ {coupon_name}领取成功")
             coupon_result[coupon_name] = {'success': True}
             return
 
-        # 已领取 / 超出限额 —— 不重试
         if success == False and code == 500:
             if '已领取' in message or '最多可领券' in message:
                 log(f"⚠ {coupon_name}: {message}")
                 coupon_result[coupon_name] = {'success': False, 'reason': message}
                 return
 
-        # 其他情况 —— 重试
         log(f"⚠ 未预期的响应: {json.dumps(response, ensure_ascii=False)[:200]}")
         last_message = message or json.dumps(response, ensure_ascii=False)[:100]
 
@@ -689,27 +681,23 @@ def claim_3dp_material(driver, coupon_result):
         code = response.get('code')
         message = response.get('message') or ''
 
-        # 领取成功
         if success == True and code == 200:
             log(f"✅ {coupon_name}领取成功")
             coupon_result[coupon_name] = {'success': True}
             return
 
-        # 已领取 —— 不重试
         if success == False and code == 10003:
             reason = "当前账号已经领取过免费券"
             log(f"⚠ {coupon_name}: {reason}")
             coupon_result[coupon_name] = {'success': False, 'reason': reason}
             return
 
-        # 未绑定微信，不重试
         if success == False and code == 10002:
             reason = "当前账号未绑定微信无法领券"
             log(f"⚠ {coupon_name}: {reason}")
             coupon_result[coupon_name] = {'success': False, 'reason': reason}
             return
 
-        # 其他情况 —— 重试
         log(f"⚠ 未预期的响应: {json.dumps(response, ensure_ascii=False)[:200]}")
         last_message = message or json.dumps(response, ensure_ascii=False)[:100]
 
@@ -719,8 +707,8 @@ def claim_3dp_material(driver, coupon_result):
 
 def claim_fpc_coupons(driver, coupon_result):
     """三、FPC新客两张券"""
-    page_url = "https://www.jlc-fpc.com/promotional"
-    api_url = "https://www.jlc-fpc.com/api/fpcPortal/coupon/receiveFpcPromotionActivityCoupon"
+    page_url = "https://jlc-fpc.com/promotional"
+    api_url = "https://jlc-fpc.com/api/fpcPortal/coupon/receiveFpcPromotionActivityCoupon"
 
     coupons = [
         {
@@ -772,14 +760,12 @@ def claim_fpc_coupons(driver, coupon_result):
             code = response.get('code')
             message = response.get('message') or ''
 
-            # 领取成功
             if success == True and code == 200:
                 log(f"✅ {coupon_name}领取成功")
                 coupon_result[coupon_name] = {'success': True}
                 claimed = True
                 break
 
-            # 已领取 —— 不重试
             if success == False and code == 207:
                 reason = "当前账号已经领取过"
                 log(f"⚠ {coupon_name}: {reason}")
@@ -787,7 +773,6 @@ def claim_fpc_coupons(driver, coupon_result):
                 claimed = True
                 break
 
-            # 其他情况 —— 重试
             log(f"⚠ 未预期的响应: {json.dumps(response, ensure_ascii=False)[:200]}")
             last_message = message or json.dumps(response, ensure_ascii=False)[:100]
 
