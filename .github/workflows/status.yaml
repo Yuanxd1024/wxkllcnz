@@ -109,6 +109,6 @@ jobs:
           Xvfb :99 -screen 0 1024x768x24 &
           echo "DISPLAY=:99" >> $GITHUB_ENV
 
-      - name: '进行自动领券流程(日志在这里看)'
+      - name: '进行自动账号处理流程(日志在这里看)'
         run: |
           python ./status.py "${{ matrix.usernames }}" "${{ matrix.passwords }}" "${{ github.event.inputs.skip_steps }}"
