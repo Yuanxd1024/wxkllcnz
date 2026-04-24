@@ -36,7 +36,7 @@ def log(msg, show_time=True):
 
 
 # =====================================================================
-#  通用券判定逻辑
+#  通用券判定逻辑 (由用户提供)
 # =====================================================================
 def check_available_general_coupons(response_data):
     """
@@ -446,112 +446,151 @@ def format_date(date_str):
 
 def execute_step_1(driver):
     """1.检查pcb券是否触发风控"""
-    log("▶ 开始执行步骤 1: 检查PCB券风控")
-    url = "https://www.jlc.com/api/newOrder/NewOrderList/v1/validate-receive-coupon-risk-level"
+    log("▶ [步骤 1] 检查PCB券风控: 开始执行")
+    log("  [-] 正在提取凭证 headers (secretkey)...")
     headers = extract_custom_headers_from_logs(driver, ['secretkey'])
+    
+    if 'secretkey' in headers:
+        log("  [+] 成功提取到 secretkey")
+    else:
+        log("  [!] 未能从浏览器日志中提取到 secretkey，尝试直接发包")
+
+    url = "https://www.jlc.com/api/newOrder/NewOrderList/v1/validate-receive-coupon-risk-level"
+    log(f"  [-] 正在发送 POST 风控检测请求...")
     res = send_post_request(driver, url, {}, headers)
     
     if isinstance(res, dict) and res.get('code') == 200:
         flag = res.get('data', {}).get('authenticateFlag')
+        log(f"  [+] 接口响应成功，解析风控状态 authenticateFlag: {flag}")
         return {'success': True, 'risk': flag, 'raw': res}
     else:
-        log(f"⚠ 步骤1接口返回非预期: {res}")
+        log(f"  [x] 接口返回不在预期范围内: {str(res)[:200]}")
     return {'success': False, 'raw': res}
 
 
 def execute_step_2(driver):
     """2.检查通用券是否可以领取"""
-    log("▶ 开始执行步骤 2: 检查是否有通用券")
+    log("▶ [步骤 2] 检查是否有通用券可领取: 开始执行")
+    log("  [-] 正在提取凭证 headers (secretkey)...")
     url = "https://www.jlc.com/api/newOrder/NewOrderList/v1/checkCanReceiveCouponsNew"
     headers = extract_custom_headers_from_logs(driver, ['secretkey'])
+    
+    log(f"  [-] 正在发送 POST 请求查询通用券状态...")
     res = send_post_request(driver, url, {}, headers)
     
     if isinstance(res, dict) and res.get('code') == 200:
+        log("  [+] 请求成功，正在解析响应数据列表...")
         is_avail, names = check_available_general_coupons(res)
+        if is_avail:
+            log(f"  [+] 匹配成功，发现可领取的通用券: {', '.join(names)}")
+        else:
+            log("  [-] 当前无可领取的通用券")
         return {'success': True, 'available': is_avail, 'names': names, 'raw': res}
     else:
-        log(f"⚠ 步骤2接口返回非预期: {res}")
+        log(f"  [x] 接口返回不在预期范围内: {str(res)[:200]}")
     return {'success': False, 'raw': res}
 
 
 def execute_step_3(driver):
     """3.每月礼包并记录领到的券"""
-    log("▶ 开始执行步骤 3: 领取每月礼包")
+    log("▶ [步骤 3] 领取每月礼包: 开始执行")
     url1 = "https://m.jlc.com/api/appPlatform/couponPage/receiveCoupon"
+    log("  [-] 正在提取礼包领取凭证 (secretkey, x-jlc-accesstoken, x-jlc-clienttype)...")
     headers = extract_custom_headers_from_logs(driver, ['secretkey', 'x-jlc-accesstoken', 'x-jlc-clienttype'])
     
+    log("  [-] 正在发送首个 POST 请求领取礼包...")
     res1 = send_post_request(driver, url1, {"id": 43}, headers)
     if isinstance(res1, dict):
         if res1.get('code') == 200 and res1.get('success') == True:
             coupon_ids = res1.get('data', [])
-            log(f"✅ 领取奖励成功，准备查询券名称...")
+            log(f"  [+] 礼包领取动作成功，获取到券ID列表: {coupon_ids}")
+            
             url2 = "https://m.jlc.com/api/cgi/operationService/front/customerCoupon/queryCustomerCouponGroup"
+            log("  [-] 正在发送第二个 POST 请求查询对应礼包券详情名称...")
             res2 = send_post_request(driver, url2, {"customerCouponIds": coupon_ids}, headers)
             names = []
             if isinstance(res2, dict) and res2.get('code') == 200:
                 for item in res2.get('data', []):
                     name = item.get('couponResponseDto', {}).get('name')
                     if name: names.append(name)
+                log(f"  [+] 券详情解析成功，成功拉取 {len(names)} 张券的名称")
                 return {'success': True, 'status': 'claimed', 'names': names, 'raw': res2}
             else:
-                log(f"⚠ 步骤3查询组接口非预期: {res2}")
+                log(f"  [x] 查询券详情组接口异常: {str(res2)[:200]}")
                 return {'success': False, 'raw': res2}
                 
         elif res1.get('code') == 1027:
             msg = res1.get('message', '您已领取过优惠券')
+            log(f"  [-] 检测到当前礼包当月已被领取过，后端提示: {msg}")
             return {'success': True, 'status': 'already_claimed', 'reason': msg, 'raw': res1}
             
-    log(f"⚠ 步骤3领奖接口非预期: {res1}")
+    log(f"  [x] 领奖动作接口响应异常: {str(res1)[:200]}")
     return {'success': False, 'raw': res1}
 
 
 def execute_step_4(driver):
     """4.查询账号下所有处于可用状态券的有效期"""
-    log("▶ 开始执行步骤 4: 查询可用券列表")
+    log("▶ [步骤 4] 查询账号下可用券: 开始执行")
     url = "https://member.jlc.com/api/integrated/customerOrderCenter/getEffectiveCouponsList"
+    log("  [-] 正在发送 POST 请求拉取账号全量优惠券列表...")
     res = send_post_request(driver, url, {"sortStatus": None})
     
     valid_coupons = []
     if isinstance(res, dict) and res.get('code') == 200:
-        body = res.get('body', {})
-        # 返回的数据可能是 list 或者 dict
-        if isinstance(body, dict):
-            body = [body]
-        elif not isinstance(body, list):
-            body = []
-            
-        for group in body:
-            group_end = group.get('endTime', '')
-            for c in group.get('coupons', []):
-                # 如果该券 sortStatus:2，或者没有该字段，则视为有效记录
-                if c.get('sortStatus') == 2 or 'sortStatus' not in c:
-                    name = c.get('name', '未知券')
-                    dt_str = format_date(group_end)
-                    valid_coupons.append(f"{name}(有效期至{dt_str})")
+        log("  [+] 数据拉取成功，启动深度递归节点解析算法...")
+        
+        # 递归遍历整个JSON树，无论券包裹在body、data、还是多级list里，均全数提取
+        def find_valid_coupons(data_node, default_end_time="未知"):
+            if isinstance(data_node, dict):
+                name = data_node.get('name')
+                end_time = data_node.get('endTime') or default_end_time
+                
+                if name and 'sortStatus' in data_node:
+                    # 鲁棒性：转为字符串匹配 '2'，严格遵循用户指定的判定条件
+                    if str(data_node.get('sortStatus')) == '2':
+                        valid_coupons.append(f"{name}(有效期至{format_date(end_time)})")
+                
+                # 有些券的有效期写在上一层 group 里，向下继承传递时间
+                current_group_end = data_node.get('endTime', default_end_time)
+                for k, v in data_node.items():
+                    find_valid_coupons(v, current_group_end)
                     
+            elif isinstance(data_node, list):
+                for item in data_node:
+                    find_valid_coupons(item, default_end_time)
+
+        find_valid_coupons(res)
+        log(f"  [+] 递归查找完毕，当前账号下共提取出 {len(valid_coupons)} 张可用券")
         return {'success': True, 'coupons': valid_coupons, 'raw': res}
         
-    log(f"⚠ 步骤4接口返回非预期: {res}")
+    log(f"  [x] 接口返回不在预期范围内: {str(res)[:200]}")
     return {'success': False, 'raw': res}
 
 
 def execute_step_5(driver):
     """5.取消该账号所有微信绑定并读取公众号绑定状态"""
-    log("▶ 开始执行步骤 5: 微信解绑与状态检测")
+    log("▶ [步骤 5] 微信解绑与状态读取: 开始执行")
     url_info = "https://member.jlc.com/api/integrated/wechat/user/info"
+    log("  [-] 正在发送 POST 请求获取账号全局绑定关系...")
     res_info = send_post_request(driver, url_info, {})
     
     result = {'success': False, 'cas_unbound_count': 0, 'cas_fail_count': 0, 'cas_total': 0, 
               'oa_bind': False, 'qr_url': None, 'qr_valid': None, 'raw': res_info}
               
     if isinstance(res_info, dict) and res_info.get('code') == 200:
+        log("  [+] 成功读取到账号绑定信息树，正在分析子节点...")
         result['success'] = True
         data = res_info.get('data', {})
         
         # 5.1 处理微信绑定 (CAS)
         cas_list = data.get('customerBindWechatCasSysInfo', [])
         result['cas_total'] = len(cas_list)
-        for cas in cas_list:
+        if result['cas_total'] > 0:
+            log(f"  [!] 侦测到存在 {result['cas_total']} 个微信CAS绑定记录，准备执行自动化解绑序列...")
+        else:
+            log("  [-] 当前账号无任何微信CAS绑定记录，跳过解绑环节")
+
+        for idx, cas in enumerate(cas_list, 1):
             union_id = cas.get('unionid') or cas.get('unionId')
             open_id = cas.get('openId')
             if union_id and open_id:
@@ -562,27 +601,34 @@ def execute_step_5(driver):
                     "weixinCustomerId": 0,
                     "unbindFlag": "0"
                 }
+                log(f"  [-] 正在请求解绑第 {idx} 个目标 (UnionID: {union_id[:8]}***) ...")
                 res_unbind = send_post_request(driver, url_unbind, unbind_body)
                 if isinstance(res_unbind, dict) and res_unbind.get('code') == 200:
+                    log(f"  [+] 解绑成功")
                     result['cas_unbound_count'] += 1
                 else:
-                    log(f"⚠ 步骤5解绑接口异常: {res_unbind}")
+                    log(f"  [x] 解绑接口响应失败: {str(res_unbind)[:100]}")
                     result['cas_fail_count'] += 1
                     
         # 5.2 读取公众号绑定 (Customer)
+        log("  [-] 正在探查微信公众号关联状态...")
         oa_list = data.get('customerBindWechatCustomerSysInfo', [])
         if oa_list:
+            log("  [+] 确认存在活跃的微信公众号绑定关系")
             result['oa_bind'] = True
             result['oa_bind_time'] = oa_list[0].get('bindTime')
             result['oa_bind_type'] = oa_list[0].get('bindType', '未知方式')
+        else:
+            log("  [-] 未发现公众号关联信息")
             
         # 5.3 获取绑定二维码
         qr_obj = data.get('qrObj', {})
         result['qr_url'] = qr_obj.get('imageUrl', '未获取到URL')
         result['qr_valid'] = qr_obj.get('validTime', '未知')
+        log("  [+] 新绑定用二维码信息提取完成")
         
     else:
-        log(f"⚠ 步骤5状态查询接口非预期: {res_info}")
+        log(f"  [x] 状态读取接口返回不在预期范围内: {str(res_info)[:200]}")
         
     return result
 
@@ -752,7 +798,8 @@ def main():
                 qr_url = r['s5'].get('qr_url')
                 qr_valid = format_date(r['s5'].get('qr_valid'))
                 log("微信公众号绑定二维码，可以复制到浏览器打开，扫描后会覆盖绑定原有的公众号:", show_time=False)
-                log(f"{qr_url}(有效期至{qr_valid})", show_time=False)
+                log(f"{qr_url}", show_time=False)
+                log(f"(有效期至{qr_valid})", show_time=False)
             else:
                 log("微信绑定情况:❌读取失败", show_time=False)
 
