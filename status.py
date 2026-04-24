@@ -757,7 +757,9 @@ def main():
     log("📊 执行结果总结", show_time=False)
     log(f"{'='*50}", show_time=False)
 
-    for r in all_results:
+    for i, r in enumerate(all_results):
+        if i > 0:
+            log(f"{'='*50}", show_time=False)
         log(f"\n账号{r['index']}({r['username']})", show_time=False)
         
         # 阶段1
