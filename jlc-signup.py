@@ -1,3 +1,4 @@
+
 import os
 import sys
 import time
@@ -685,8 +686,8 @@ def register_account(hzm, config, email_index, fixed_password):
             pass
         
         proxy_success = False
-        for proxy_attempt in range(3):
-            log(f"🔗 开始获取代理并重建环境 (尝试 {proxy_attempt+1}/3)...")
+        for proxy_attempt in range(10):
+            log(f"🔗 开始获取代理并重建环境 (尝试 {proxy_attempt+1}/10)...")
             proxy_str = get_valid_proxy(timeout=300)
             if not proxy_str:
                 log("⚠ 获取新代理超时或失败。")
@@ -733,7 +734,7 @@ def register_account(hzm, config, email_index, fixed_password):
                 
         if not proxy_success:
             hzm.release_phone(phone)
-            raise Exception("连续 3 次获取代理并重建浏览器环境失败，放弃当前任务，重新开始注册")
+            raise Exception("连续 10 次获取代理并重建浏览器环境失败，放弃当前任务，重新开始注册")
             
         driver.set_page_load_timeout(20)
         time.sleep(random.uniform(1.5, 2.5))
@@ -974,7 +975,7 @@ def register_account(hzm, config, email_index, fixed_password):
                     log("❌ 超过最大重试，跳过归属设置")
 
         log("🌐 开始绑定邮箱...")
-        for attempt in range(5):
+        for attempt in range(3):
             try:
                 safe_get_page(driver, "https://passport.jlc.com/set-email")
                 time.sleep(3)
@@ -1030,7 +1031,7 @@ def register_account(hzm, config, email_index, fixed_password):
                     raise Exception(f"邮箱最终绑定请求失败: {r_ce}")
             except Exception as e:
                 log(f"⚠ 绑定邮箱第 {attempt+1} 次尝试失败: {e}")
-                if attempt == 4:
+                if attempt == 2:
                     log("❌ 超过最大重试，绑定邮箱失败")
                     account_info["email"] = "未绑定"
 
