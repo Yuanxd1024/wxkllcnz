@@ -624,14 +624,11 @@ def claim_3dp_30_20(driver, coupon_result):
             coupon_result[coupon_name] = {'success': True}
             return
 
-        if success == False and code == 500:
-            if '已领取' in message or '最多可领券' in message:
-                log(f"⚠ {coupon_name}: {message}")
-                coupon_result[coupon_name] = {'success': False, 'reason': message}
-                return
-
-        log(f"⚠ 未预期的响应: {json.dumps(response, ensure_ascii=False)[:200]}")
-        last_message = message or json.dumps(response, ensure_ascii=False)[:100]
+        # 只要接口有返回业务响应结果但不是领取成功，就不需要再盲目重试，直接跳过并记录失败原因
+        reason = message if message else json.dumps(response, ensure_ascii=False)[:100]
+        log(f"⚠ {coupon_name}: {reason}")
+        coupon_result[coupon_name] = {'success': False, 'reason': reason}
+        return
 
     log(f"❌ {coupon_name}领取失败（已达最大重试次数）")
     coupon_result[coupon_name] = {'success': False, 'reason': last_message or '重试后仍失败'}
@@ -685,20 +682,16 @@ def claim_3dp_material(driver, coupon_result):
             coupon_result[coupon_name] = {'success': True}
             return
 
-        if success == False and code == 10003:
+        if code == 10003:
             reason = "当前账号已经领取过免费券"
-            log(f"⚠ {coupon_name}: {reason}")
-            coupon_result[coupon_name] = {'success': False, 'reason': reason}
-            return
-
-        if success == False and code == 10002:
+        elif code == 10002:
             reason = "当前账号未绑定微信无法领券"
-            log(f"⚠ {coupon_name}: {reason}")
-            coupon_result[coupon_name] = {'success': False, 'reason': reason}
-            return
-
-        log(f"⚠ 未预期的响应: {json.dumps(response, ensure_ascii=False)[:200]}")
-        last_message = message or json.dumps(response, ensure_ascii=False)[:100]
+        else:
+            reason = message if message else json.dumps(response, ensure_ascii=False)[:100]
+            
+        log(f"⚠ {coupon_name}: {reason}")
+        coupon_result[coupon_name] = {'success': False, 'reason': reason}
+        return
 
     log(f"❌ {coupon_name}领取失败（已达最大重试次数）")
     coupon_result[coupon_name] = {'success': False, 'reason': last_message or '重试后仍失败'}
@@ -804,14 +797,10 @@ def claim_invite_coupon(driver, coupon_result, invite_link):
                 coupon_result[coupon_name] = {'success': False, 'reason': receive_msg}
                 return
 
-        if success == False and message:
-            if '已领取' in message or '上限' in message:
-                log(f"⚠ {coupon_name}: {message}")
-                coupon_result[coupon_name] = {'success': False, 'reason': message}
-                return
-
-        log(f"⚠ 未预期的响应: {json.dumps(response, ensure_ascii=False)[:200]}")
-        last_message = message or json.dumps(response, ensure_ascii=False)[:100]
+        reason = message if message else json.dumps(response, ensure_ascii=False)[:100]
+        log(f"⚠ {coupon_name}: {reason}")
+        coupon_result[coupon_name] = {'success': False, 'reason': reason}
+        return
 
     log(f"❌ {coupon_name}领取失败（已达最大重试次数）")
     coupon_result[coupon_name] = {'success': False, 'reason': last_message or '重试后仍失败'}
@@ -878,15 +867,15 @@ def claim_fpc_coupons(driver, coupon_result):
                 claimed = True
                 break
 
-            if success == False and code == 207:
+            if code == 207:
                 reason = "当前账号已经领取过"
-                log(f"⚠ {coupon_name}: {reason}")
-                coupon_result[coupon_name] = {'success': False, 'reason': reason}
-                claimed = True
-                break
-
-            log(f"⚠ 未预期的响应: {json.dumps(response, ensure_ascii=False)[:200]}")
-            last_message = message or json.dumps(response, ensure_ascii=False)[:100]
+            else:
+                reason = message if message else json.dumps(response, ensure_ascii=False)[:100]
+                
+            log(f"⚠ {coupon_name}: {reason}")
+            coupon_result[coupon_name] = {'success': False, 'reason': reason}
+            claimed = True
+            break
 
         if not claimed:
             log(f"❌ {coupon_name}领取失败（已达最大重试次数）")
