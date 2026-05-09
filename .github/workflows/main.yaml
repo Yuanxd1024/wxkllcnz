@@ -18,6 +18,11 @@ on:
         required: true
         type: number
         default: 1
+      invite_link:
+        description: 'FPC邀请链接，不填则默认普通注册)'
+        required: false
+        type: string
+        default: ''
 
 jobs:
   # Job 1: 预处理阶段 - 校验输入并动态生成矩阵分配计划
@@ -28,7 +33,7 @@ jobs:
     steps:
       - name: '检查仓库公开状态'
         run: |
-          if [ "${{ github.event.repository.private }}" == "true" ]; then
+          if[ "${{ github.event.repository.private }}" == "true" ]; then
             echo "::error::检测到当前仓库为私有状态，任务已拒绝运行，你也不想让账单爆表对吧，请公开仓库后再试。"
             exit 1
           fi
@@ -56,7 +61,7 @@ jobs:
           CURRENT_IDX=$START_IDX
           BATCH=1
           
-          while [ $REMAINING -gt 0 ] && [ $BATCH -le 5 ]; do
+          while[ $REMAINING -gt 0 ] && [ $BATCH -le 5 ]; do
             COUNT=$REMAINING
             if [ $COUNT -gt 20 ]; then
               COUNT=20
@@ -129,8 +134,8 @@ jobs:
         env:
           DISPLAY: ':99'
         run: |
-          # 传入动态计算好的 数量、密码、递增序号
-          python -u jlc-signup.py ${{ matrix.batch_info.count }} '${{ github.event.inputs.password }}' ${{ matrix.batch_info.start_idx }}
+          # 传入动态计算好的 数量、密码、递增序号 以及自定义邀请链接
+          python -u jlc-signup.py ${{ matrix.batch_info.count }} '${{ github.event.inputs.password }}' ${{ matrix.batch_info.start_idx }} '${{ github.event.inputs.invite_link }}'
 
       - name: '重命名结果文件以便独立上传'
         if: always()
