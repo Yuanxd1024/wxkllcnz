@@ -9,6 +9,10 @@ on:
       passwords:
         description: '密码组（英文逗号分隔，必须与账号对应）'
         required: true
+      invite_link:
+        description: '邀请链接（选填，不填则跳过领取邀请免邮券绑定邀请账号）'
+        required: false
+        default: ''
 
 jobs:
   prepare:
@@ -21,18 +25,20 @@ jobs:
         env:
           USERS: ${{ github.event.inputs.usernames }}
           PASSWORDS: ${{ github.event.inputs.passwords }}
+          INVITE_LINK: ${{ github.event.inputs.invite_link }}
         run: |
           python -c '
           import os, json
-          users = [u.strip() for u in os.environ.get("USERS", "").split(",") if u.strip()]
-          passwords = [p.strip() for p in os.environ.get("PASSWORDS", "").split(",") if p.strip()]
+          users =[u.strip() for u in os.environ.get("USERS", "").split(",") if u.strip()]
+          passwords =[p.strip() for p in os.environ.get("PASSWORDS", "").split(",") if p.strip()]
+          invite_link = os.environ.get("INVITE_LINK", "").strip()
           
           if len(users) != len(passwords):
               print("Error: 账号与密码数量不匹配")
               exit(1)
               
           batch_size = 30
-          matrix = []
+          matrix =[]
           group_idx = 1
           for i in range(0, len(users), batch_size):
               u_batch_list = users[i:i+batch_size]
@@ -40,7 +46,7 @@ jobs:
               u_batch = ",".join(u_batch_list)
               p_batch = ",".join(p_batch_list)
               job_name = f"账号组{group_idx}({len(u_batch_list)}个号)"
-              matrix.append({"name": job_name, "usernames": u_batch, "passwords": p_batch})
+              matrix.append({"name": job_name, "usernames": u_batch, "passwords": p_batch, "invite_link": invite_link})
               group_idx += 1
               
           with open(os.environ["GITHUB_OUTPUT"], "a") as f:
@@ -106,5 +112,7 @@ jobs:
           echo "DISPLAY=:99" >> $GITHUB_ENV
 
       - name: '进行自动领券流程(日志在这里看)'
+        env:
+          INVITE_LINK: ${{ matrix.invite_link }}
         run: |
-          python ./lingquan.py "${{ matrix.usernames }}" "${{ matrix.passwords }}"
+          python ./lingquan.py "${{ matrix.usernames }}" "${{ matrix.passwords }}" "$INVITE_LINK"
