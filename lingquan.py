@@ -812,7 +812,10 @@ def claim_invite_coupon(driver, coupon_result, invite_link):
     coupon_result[coupon_name] = {'success': False, 'reason': last_message or '重试后仍失败'}
 
 
-def claim_fpc_coupons(driver, coupon_result):
+def claim_fpc_coupons(driver, coupon_result, skip_coupons_list=None):
+    if skip_coupons_list is None:
+        skip_coupons_list =[]
+        
     """四、FPC新客两张券"""
     page_url = "https://jlc-fpc.com/promotional"
     api_url = "https://jlc-fpc.com/api/fpcPortal/coupon/receiveFpcPromotionActivityCoupon"
@@ -840,7 +843,7 @@ def claim_fpc_coupons(driver, coupon_result):
     for coupon_info in coupons:
         coupon_name = coupon_info['name']
         
-        if coupon_result.get(coupon_name, {}).get('success'):
+        if coupon_result.get(coupon_name, {}).get('success') or coupon_name in skip_coupons_list:
             continue
             
         body = coupon_info['body']
@@ -892,7 +895,10 @@ def claim_fpc_coupons(driver, coupon_result):
 #  单账号处理 & 主函数
 # =====================================================================
 
-def process_single_account(username, password, account_index, total_accounts, invite_link=""):
+def process_single_account(username, password, account_index, total_accounts, invite_link="", skip_coupons_list=None):
+    if skip_coupons_list is None:
+        skip_coupons_list =[]
+        
     """处理单个账号的完整领券流程"""
     coupon_names_ordered =[
         "3D打印30-20券",
@@ -903,7 +909,10 @@ def process_single_account(username, password, account_index, total_accounts, in
     ]
     coupon_result = {}
     for name in coupon_names_ordered:
-        coupon_result[name] = {'success': False, 'reason': '未执行'}
+        if name in skip_coupons_list:
+            coupon_result[name] = {'success': False, 'reason': '手动选择跳过'}
+        else:
+            coupon_result[name] = {'success': False, 'reason': '未执行'}
 
     max_account_retries = 3
 
@@ -933,23 +942,26 @@ def process_single_account(username, password, account_index, total_accounts, in
                 raise Exception("登录流程失败")
 
             # ====== 阶段 2: 依次领取各组券 ======
-            if not coupon_result["3D打印30-20券"].get('success'):
+            if not coupon_result["3D打印30-20券"].get('success') and "3D打印30-20券" not in skip_coupons_list:
                 claim_3dp_30_20(driver, coupon_result)
                 
-            if not coupon_result["3D打印高值材料券"].get('success'):
+            if not coupon_result["3D打印高值材料券"].get('success') and "3D打印高值材料券" not in skip_coupons_list:
                 claim_3dp_material(driver, coupon_result)
 
-            if not coupon_result["邀请免运优惠券"].get('success'):
+            if not coupon_result["邀请免运优惠券"].get('success') and "邀请免运优惠券" not in skip_coupons_list:
                 claim_invite_coupon(driver, coupon_result, invite_link)
                 
-            if not coupon_result["FPC新客免费打样券"].get('success') or not coupon_result["FPC 100元优惠券"].get('success'):
-                claim_fpc_coupons(driver, coupon_result)
+            need_fpc1 = not coupon_result["FPC新客免费打样券"].get('success') and "FPC新客免费打样券" not in skip_coupons_list
+            need_fpc2 = not coupon_result["FPC 100元优惠券"].get('success') and "FPC 100元优惠券" not in skip_coupons_list
+            
+            if need_fpc1 or need_fpc2:
+                claim_fpc_coupons(driver, coupon_result, skip_coupons_list)
 
         except Exception as e:
             log(f"❌ 账号处理异常: {e}")
             success_this_round = False
             for name in coupon_names_ordered:
-                if not coupon_result[name].get('success'):
+                if not coupon_result[name].get('success') and name not in skip_coupons_list:
                     coupon_result[name] = {'success': False, 'reason': f'异常: {str(e)[:80]}'}
         finally:
             if driver:
@@ -972,18 +984,31 @@ def process_single_account(username, password, account_index, total_accounts, in
 
 def main():
     if len(sys.argv) < 3:
-        print("用法: python lingquan.py 账号1,账号2... 密码1,密码2... [邀请链接]")
+        print("用法: python lingquan.py 账号1,账号2... 密码1,密码2... [邀请链接] [跳过券序号]")
         sys.exit(1)
 
     usernames = sys.argv[1].split(',')
     passwords = sys.argv[2].split(',')
     invite_link = sys.argv[3] if len(sys.argv) > 3 else ""
+    skip_str = sys.argv[4] if len(sys.argv) > 4 else ""
+
+    skip_ids =[s.strip() for s in skip_str.split(',') if s.strip()]
+    id_to_name = {
+        "1": "3D打印30-20券",
+        "2": "3D打印高值材料券",
+        "3": "邀请免运优惠券",
+        "4": "FPC新客免费打样券",
+        "5": "FPC 100元优惠券"
+    }
+    skip_coupons_list =[id_to_name[sid] for sid in skip_ids if sid in id_to_name]
 
     if len(usernames) != len(passwords):
         log("❌ 账号密码数量不匹配")
         sys.exit(1)
 
     log(f"检测到 {len(usernames)} 个账号需要领券", show_time=False)
+    if skip_coupons_list:
+        log(f"将跳过领取以下券: {', '.join(skip_coupons_list)}", show_time=False)
 
     all_results =[]
 
@@ -991,7 +1016,7 @@ def main():
         log(f"\n{'='*50}", show_time=False)
         log(f"🚀 正在处理账号 {i}/{len(usernames)}", show_time=False)
         log(f"{'='*50}", show_time=False)
-        result = process_single_account(u, p, i, len(usernames), invite_link)
+        result = process_single_account(u, p, i, len(usernames), invite_link, skip_coupons_list)
         all_results.append(result)
         if i < len(usernames):
             log("⏳ 等待5秒后处理下一个账号...")
