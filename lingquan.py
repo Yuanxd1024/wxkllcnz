@@ -700,22 +700,28 @@ def claim_3dp_material(driver, coupon_result):
 def claim_invite_coupon(driver, coupon_result, invite_link):
     """三、邀请免运优惠券"""
     coupon_name = "邀请免运优惠券"
+    
     if not invite_link:
         coupon_result[coupon_name] = {'success': False, 'reason': '未填写邀请链接，跳过'}
         return
         
+    log(f"\n🎫 === 开始领取{coupon_name} ===")
+
     try:
-        parsed_url = urlparse(invite_link)
-        query_params = parse_qs(parsed_url.query)
-        invitation_code = query_params.get('shareid', [''])[0]
-        if not invitation_code:
-            coupon_result[coupon_name] = {'success': False, 'reason': '无法从链接解析到shareid'}
+        # 兼容 ?shareid=xxx 和 /ia/xxx 两种链接格式
+        match = re.search(r'(?:shareid=|/ia/)([a-zA-Z0-9]+)', invite_link)
+        if match:
+            invitation_code = match.group(1)
+        else:
+            reason = '无法从链接解析到邀请码(shareid)'
+            log(f"⚠ {reason}")
+            coupon_result[coupon_name] = {'success': False, 'reason': reason}
             return
     except Exception as e:
-        coupon_result[coupon_name] = {'success': False, 'reason': f'链接解析失败: {e}'}
+        reason = f'链接解析失败: {e}'
+        log(f"⚠ {reason}")
+        coupon_result[coupon_name] = {'success': False, 'reason': reason}
         return
-
-    log(f"\n🎫 === 开始领取{coupon_name} ===")
 
     clear_performance_logs(driver)
     open_page_and_wait_sso(driver, invite_link)
