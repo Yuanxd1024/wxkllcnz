@@ -19,7 +19,7 @@ on:
         type: number
         default: 1
       invite_link:
-        description: 'FPC邀请链接，不填则默认普通注册)'
+        description: 'FPC邀请链接，不填则默认普通注册'
         required: false
         type: string
         default: ''
