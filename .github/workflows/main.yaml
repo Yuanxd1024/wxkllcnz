@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       total_accounts:
-        description: '需要注册的账号总数 (最大100)'
+        description: '需要注册的账号总数 (最大400)'
         required: true
         type: number
         default: 10
@@ -19,7 +19,7 @@ on:
         type: number
         default: 1
       invite_link:
-        description: 'FPC邀请链接，不填则默认普通注册'
+        description: 'FPC邀请链接，多个请用英文逗号隔开，不填则默认普通注册'
         required: false
         type: string
         default: ''
@@ -40,6 +40,8 @@ jobs:
 
       - name: '检查输入合法性并动态配置矩阵'
         id: set-matrix
+        env:
+          INVITE_LINKS: ${{ github.event.inputs.invite_link }}
         run: |
           TOTAL=${{ github.event.inputs.total_accounts }}
           START_IDX=${{ github.event.inputs.start_email_index }}
@@ -50,18 +52,21 @@ jobs:
             exit 1
           fi
           
-          if (( TOTAL > 100 )); then
-            echo "::error::注册数量大于100，易封控，请减少注册数量或分多个工作流运行"
+          if (( TOTAL > 400 )); then
+            echo "::error::注册数量大于400，易封控，请减少注册数量或分多个工作流运行"
             exit 1
           fi
 
-          # 2. 动态计算批次 (单次最多20个，最大5批)
+          # 解析逗号分隔的邀请链接为数组
+          IFS=',' read -ra LINKS_ARRAY <<< "$INVITE_LINKS"
+
+          # 2. 动态计算批次 (单次最多20个，最大20批，满足400个账号限制)
           JSON="["
           REMAINING=$TOTAL
           CURRENT_IDX=$START_IDX
           BATCH=1
           
-          while [ $REMAINING -gt 0 ] && [ $BATCH -le 5 ]; do
+          while [ $REMAINING -gt 0 ] && [ $BATCH -le 20 ]; do
             COUNT=$REMAINING
             if [ $COUNT -gt 20 ]; then
               COUNT=20
@@ -71,8 +76,20 @@ jobs:
               JSON="$JSON,"
             fi
             
+            # 按批次索引分配邀请链接
+            LINK=""
+            INDEX=$((BATCH - 1))
+            if [ $INDEX -lt ${#LINKS_ARRAY[@]} ]; then
+              LINK="${LINKS_ARRAY[$INDEX]}"
+            fi
+            
+            # 去除链接首尾可能残留的空格
+            LINK=$(echo "$LINK" | sed 's/^[ \t]*//;s/[ \t]*$//')
+            # 过滤危险字符并转义双引号，防止拼接时破坏 JSON 格式
+            SAFE_LINK=$(echo "$LINK" | sed 's/"/\\"/g' | tr -d '\n\r')
+            
             # 生成单个批次的 JSON 参数
-            JSON="$JSON{\"batch\": $BATCH, \"count\": $COUNT, \"start_idx\": $CURRENT_IDX}"
+            JSON="$JSON{\"batch\": $BATCH, \"count\": $COUNT, \"start_idx\": $CURRENT_IDX, \"invite_link\": \"$SAFE_LINK\"}"
             
             # 扣除已分配数量，递增邮箱和批次号
             REMAINING=$((REMAINING - COUNT))
@@ -133,9 +150,11 @@ jobs:
       - name: '运行注册脚本 (批次 ${{ matrix.batch_info.batch }})'
         env:
           DISPLAY: ':99'
+          INVITE_LINK: ${{ matrix.batch_info.invite_link }}
+          PASSWORD: ${{ github.event.inputs.password }}
         run: |
-          # 传入动态计算好的 数量、密码、递增序号 以及自定义邀请链接
-          python -u jlc-signup.py ${{ matrix.batch_info.count }} '${{ github.event.inputs.password }}' ${{ matrix.batch_info.start_idx }} '${{ github.event.inputs.invite_link }}'
+          # 传入动态计算好的 数量、密码、递增序号 以及 对应的邀请链接
+          python -u jlc-signup.py ${{ matrix.batch_info.count }} "$PASSWORD" ${{ matrix.batch_info.start_idx }} "$INVITE_LINK"
 
       - name: '重命名结果文件以便独立上传'
         if: always()
