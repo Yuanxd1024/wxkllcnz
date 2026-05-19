@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       total_accounts:
-        description: '需要注册的账号总数 (最大400)'
+        description: '需要注册的账号总数 (最大500)'
         required: true
         type: number
         default: 10
@@ -52,24 +52,24 @@ jobs:
             exit 1
           fi
           
-          if (( TOTAL > 400 )); then
-            echo "::error::注册数量大于400，易封控，请减少注册数量或分多个工作流运行"
+          if (( TOTAL > 500 )); then
+            echo "::error::注册数量大于500，易封控，请减少注册数量或分多个工作流运行"
             exit 1
           fi
 
           # 解析逗号分隔的邀请链接为数组
           IFS=',' read -ra LINKS_ARRAY <<< "$INVITE_LINKS"
 
-          # 2. 动态计算批次 (单次最多20个，最大20批，满足400个账号限制)
+          # 2. 动态计算批次 (单次最多10个，最大50批，满足500个账号限制)
           JSON="["
           REMAINING=$TOTAL
           CURRENT_IDX=$START_IDX
           BATCH=1
           
-          while [ $REMAINING -gt 0 ] && [ $BATCH -le 20 ]; do
+          while [ $REMAINING -gt 0 ] && [ $BATCH -le 50 ]; do
             COUNT=$REMAINING
-            if [ $COUNT -gt 20 ]; then
-              COUNT=20
+            if [ $COUNT -gt 10 ]; then
+              COUNT=10
             fi
             
             if [ $BATCH -gt 1 ]; then
@@ -187,19 +187,28 @@ jobs:
         with:
           path: temp_artifacts
 
-      - name: '合并结果文件'
+      - name: '合并结果文件并自动重命名'
         id: merge
         run: |
           TOTAL=${{ github.event.inputs.total_accounts }}
-          MERGED_FILE="${TOTAL}个账号注册结果.txt"
-          touch "$MERGED_FILE"
+          TEMP_MERGED="temp_merged.txt"
+          touch "$TEMP_MERGED"
           
-          # 提取下载目录下所有的 batch 文件并合并到最终文件
+          # 提取下载目录下所有的 batch 文件并合并到中间文件
           find temp_artifacts -type f -name "batch-*-account.txt" | sort | while read file; do
-            cat "$file" >> "$MERGED_FILE"
+            cat "$file" >> "$TEMP_MERGED"
           done
           
-          if [ -s "$MERGED_FILE" ]; then
+          # 检查中间文件是否有实际内容
+          if [ -s "$TEMP_MERGED" ]; then
+            # 统计提取成功行数（实注册）、未设置归属/未绑定邮箱行数（信息不全）
+            ACTUAL=$(awk '/客编:/{count++} END{print count+0}' "$TEMP_MERGED")
+            INCOMPLETE=$(awk '/未设置|未绑定/{count++} END{print count+0}' "$TEMP_MERGED")
+            
+            # 拼装为全新的文件名
+            MERGED_FILE="立创注册结果(应注册${TOTAL},实注册${ACTUAL},信息不全${INCOMPLETE}).txt"
+            mv "$TEMP_MERGED" "$MERGED_FILE"
+            
             echo "has_data=true" >> $GITHUB_OUTPUT
             echo "filename=$MERGED_FILE" >> $GITHUB_OUTPUT
           else
